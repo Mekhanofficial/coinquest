@@ -1,4 +1,4 @@
-const DEFAULT_API_BASE_URL = "http://localhost:5000/api";
+const DEFAULT_API_BASE_URL = "https://coinquest-backend-zv5k.onrender.com/api";
 
 const normalizeUrl = (url = "") => {
   if (!url) return "";
