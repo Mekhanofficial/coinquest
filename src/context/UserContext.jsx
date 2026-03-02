@@ -1,0 +1,626 @@
+"use client";
+
+import { createContext, useContext, useState, useEffect } from "react";
+import { API_BASE_URL } from "../config/api";
+
+export const UserContext = createContext();
+
+const defaultUserData = {
+  balance: 0,
+  name: "",
+  email: "",
+  uid: "",
+  photoURL: "",
+  displayName: "",
+  firstName: "",
+  lastName: "",
+  userId: "",
+  phoneNumber: "",
+  country: "",
+  kycVerified: false,
+  kycStatus: "pending",
+  subscriptionPlan: "Basic",
+  role: "user",
+  photoURL: "",
+};
+
+const extractSubscriptionPlanFromData = (payload) => {
+  if (!payload) return null;
+  const candidates = [
+    payload.subscriptionPlan,
+    payload.currentPlan,
+    payload.plan,
+    payload.planName,
+    payload.membershipPlan,
+    payload.membership?.name,
+    payload.membership?.plan,
+    payload.membership?.planName,
+    payload.subscription?.name,
+    payload.subscription?.planName,
+    payload.subscription?.plan,
+    payload.planType,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return null;
+};
+
+const getStoredUserData = () => {
+  try {
+    const stored = localStorage.getItem("userData");
+    if (!stored) return null;
+    return JSON.parse(stored);
+  } catch (error) {
+    console.warn("Failed to read stored user data", error);
+    return null;
+  }
+};
+
+export function UserProvider({ children }) {
+  const [userData, setUserData] = useState(() => {
+    const stored = getStoredUserData();
+    return stored || defaultUserData;
+  });
+  const [isLoading, setIsLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  // 🔥 FIXED: Extract user ID from JWT token
+  const extractUserIdFromToken = (token) => {
+    if (!token) return null;
+    
+    try {
+      // JWT token has 3 parts: header.payload.signature
+      const parts = token.split('.');
+      if (parts.length !== 3) return null;
+      
+      // Decode the payload (middle part)
+      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      
+      // Try different possible fields for user ID
+      return payload.sub || payload.userId || payload.nameid || payload.uid || null;
+    } catch (error) {
+      console.error("Error decoding JWT token:", error);
+      return null;
+    }
+  };
+
+  const getStoredToken = () => {
+    const token = localStorage.getItem("authToken");
+    if (!token) return null;
+    
+    // Remove any quotes from the token
+    const cleanToken = token.replace(/^["']|["']$/g, '').trim();
+    return cleanToken;
+  };
+
+  const storeToken = (token) => {
+    // Store token without quotes
+    const cleanToken = token.replace(/^["']|["']$/g, '').trim();
+    localStorage.setItem("authToken", cleanToken);
+  };
+
+  // Test token validity
+  const testTokenValidity = async (token) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/User/Dashboard`, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Accept": "application/json",
+        },
+      });
+      return response.ok;
+    } catch (error) {
+      return false;
+    }
+  };
+
+  useEffect(() => {
+    const initializeUser = async () => {
+      const token = getStoredToken();
+      console.log("🔄 Initializing user - Clean token available:", !!token);
+
+      if (!token) {
+        setUserData(defaultUserData);
+        setIsAuthenticated(false);
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        // Test token validity first
+        const isValid = await testTokenValidity(token);
+        if (!isValid) {
+          console.log("❌ Token is invalid, clearing auth data");
+          clearAuthData();
+          setIsLoading(false);
+          return;
+        }
+
+        console.log("✅ Token is valid, fetching user data...");
+        await refreshUser();
+        setIsAuthenticated(true);
+        
+      } catch (error) {
+        console.error("❌ Failed to initialize user:", error.message);
+        setIsAuthenticated(false);
+        clearAuthData();
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    initializeUser();
+  }, []);
+
+  const clearAuthData = (clearStorage = true) => {
+    console.log("🧹 Clearing auth data");
+    setUserData(defaultUserData);
+    setIsAuthenticated(false);
+    if (clearStorage) {
+      localStorage.removeItem("authToken");
+      localStorage.removeItem("userData");
+      localStorage.removeItem("kycLastSubmitted");
+    }
+  };
+
+  const refreshUser = async () => {
+    try {
+      const token = getStoredToken();
+      if (!token) {
+        console.warn("Refresh failed: No authToken found.");
+        setIsAuthenticated(false);
+        return userData;
+      }
+      
+      console.log("🔑 Attempting user refresh via DASHBOARD endpoint...");
+
+      const response = await fetch(`${API_BASE_URL}/User/Dashboard`, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log("✅ Dashboard data refreshed successfully:", result);
+        
+        if (result.success && result.data) {
+          const dashboardData = result.data;
+          
+          // 🔥 IMPORTANT: Extract user ID from token
+          const userIdFromToken = extractUserIdFromToken(token);
+          const dashboardSubscriptionPlan =
+            extractSubscriptionPlanFromData(dashboardData) ||
+            userData.subscriptionPlan ||
+            "Basic";
+          
+          const rawBalance = dashboardData.balance ?? userData.balance ?? 0;
+          const updatedUserData = {
+            balance: Math.max(0, Number(rawBalance) || 0),
+            name: dashboardData.firstName || userData.name || "User",
+            email: userData.email || "",
+            uid: userIdFromToken || userData.uid || "",
+            photoURL: dashboardData.photoURL || userData.photoURL || "",
+            displayName: dashboardData.firstName || userData.displayName || "User",
+            firstName: dashboardData.firstName || userData.firstName || "",
+            lastName: userData.lastName || "",
+            userId: userIdFromToken || userData.userId || "", // 🔥 Use extracted ID
+            phoneNumber: userData.phoneNumber || "",
+            country: userData.country || "",
+            subscriptionPlan: dashboardSubscriptionPlan,
+            kycVerified: dashboardData.kycVerified || dashboardData.isKycVerified || userData.kycVerified || false,
+            kycStatus: dashboardData.kycStatus || userData.kycStatus || "pending",
+            role: dashboardData.role || userData.role || "user",
+          };
+          
+          console.log("🔄 Updated user data after dashboard refresh:", updatedUserData);
+          console.log("🔑 User ID from token:", userIdFromToken);
+          setUserData(updatedUserData);
+          setIsAuthenticated(true);
+          localStorage.setItem("userData", JSON.stringify(updatedUserData));
+          
+          return updatedUserData;
+        }
+      } else {
+        if (response.status === 401) {
+          console.log("❌ Token expired during refresh");
+          clearAuthData();
+        }
+        console.warn("⚠️ Dashboard refresh failed");
+        return userData;
+      }
+    } catch (error) {
+      console.error("💥 Error refreshing user:", error.message);
+      return userData;
+    }
+  };
+
+  const loginUser = async (email, password) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/Authentication/Login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify({
+          email: email.toLowerCase().trim(),
+          password: password
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Login failed: ${response.status}`);
+      }
+
+      const result = await response.json();
+      console.log("📦 Login API Response:", result);
+      
+      const token = result.data?.token || result.token;
+      
+      if (!token) {
+        throw new Error("Authentication token not received from server.");
+      }
+
+      // 🔥 Store token properly without quotes
+      storeToken(token);
+      
+      // Extract user ID from token immediately
+      const userIdFromToken = extractUserIdFromToken(token);
+      console.log("🔑 Extracted User ID from token:", userIdFromToken);
+
+      const userDataFromApi = result.data || result;
+      const resolvedBalance = Number(userDataFromApi.balance);
+      const loginSubscriptionPlan =
+        extractSubscriptionPlanFromData(userDataFromApi) || "Basic";
+      
+      const newUserData = {
+        uid: userIdFromToken || `user-${Date.now()}`,
+        userId: userIdFromToken || `user-${Date.now()}`,
+        email: userDataFromApi.email || email,
+        name: userDataFromApi.firstName || userDataFromApi.name || "User",
+        firstName: userDataFromApi.firstName || "",
+        lastName: userDataFromApi.lastName || "",
+        balance: Number.isFinite(resolvedBalance) ? resolvedBalance : 0,
+        photoURL: userDataFromApi.photoURL || "",
+        displayName: userDataFromApi.firstName || userDataFromApi.name || "User",
+        phoneNumber: userDataFromApi.phoneNumber || "",
+        country: userDataFromApi.country || "",
+        subscriptionPlan: loginSubscriptionPlan,
+        kycVerified: userDataFromApi.kycVerified || userDataFromApi.isKycVerified || false,
+        kycStatus: userDataFromApi.kycStatus || "pending",
+        role: userDataFromApi.role || "user",
+      };
+
+      localStorage.setItem("userData", JSON.stringify(newUserData));
+      setUserData(newUserData);
+      setIsAuthenticated(true);
+      
+      // Refresh with dashboard data
+      await refreshUser();
+      
+      console.log("🎉 LOGIN SUCCESSFUL! User ID:", newUserData.userId);
+      return newUserData;
+    } catch (error) {
+      console.error("💥 LOGIN ERROR:", error.message);
+      setIsAuthenticated(false);
+      clearAuthData();
+      throw error;
+    }
+  };
+
+  const registerUser = async (registrationData) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/User/Register`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify({
+          firstName: registrationData.firstName.trim(),
+          lastName: registrationData.lastName.trim(),
+          email: registrationData.email.toLowerCase().trim(),
+          phoneNumber: registrationData.phoneNumber.trim(),
+          sex: registrationData.sex,
+          country: registrationData.country,
+          currencyCode: registrationData.currencyCode,
+          currencySymbol: registrationData.currencySymbol,
+          password: registrationData.password,
+          confirmPassword: registrationData.confirmPassword,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Registration failed: ${response.status}`);
+      }
+
+      const result = await response.json();
+      
+      const token = result.token || result.data?.token;
+      
+      if (token) {
+        const userIdFromToken = extractUserIdFromToken(token);
+      const user = result.user || result.data?.user || result.data || result;
+      const resolvedBalance = Number(user.balance);
+      const registerSubscriptionPlan =
+        extractSubscriptionPlanFromData(user) || "Basic";
+
+      const newUserData = {
+        uid: userIdFromToken || `user-${Date.now()}`,
+          userId: userIdFromToken || `user-${Date.now()}`,
+          email: user.email || registrationData.email,
+          name: registrationData.firstName,
+          firstName: registrationData.firstName,
+          lastName: registrationData.lastName,
+          balance: Number.isFinite(resolvedBalance) ? resolvedBalance : 0,
+          photoURL: user.photoURL || "",
+          displayName: `${registrationData.firstName} ${registrationData.lastName}`,
+          subscriptionPlan: registerSubscriptionPlan,
+          role: user.role || "user",
+      };
+
+        storeToken(token);
+        localStorage.setItem("userData", JSON.stringify(newUserData));
+        setUserData(newUserData);
+        setIsAuthenticated(true);
+        
+        await refreshUser();
+        
+        return { success: true, autoLogin: true, userData: newUserData };
+      }
+      
+      return { success: true, autoLogin: false };
+    } catch (error) {
+      console.error("💥 REGISTRATION ERROR:", error.message);
+      throw error;
+    }
+  };
+
+  const logoutUser = async () => {
+    try {
+      const token = getStoredToken();
+      if (token) {
+        await fetch(`${API_BASE_URL}/User/Logout`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }).catch(err => console.error("Logout API error:", err));
+      }
+    } catch (error) {
+      console.error("Logout error:", error);
+    } finally {
+      clearAuthData();
+      console.log("👋 User logged out");
+    }
+  };
+
+  const parseJsonSafely = async (response) => {
+    const text = await response.text();
+    try {
+      return { json: JSON.parse(text), text };
+    } catch (error) {
+      return { json: null, text };
+    }
+  };
+
+  const updateUserBalance = async (amount) => {
+    const delta = Number(amount);
+    if (!Number.isFinite(delta) || delta === 0) {
+      return { success: false, error: "Invalid balance adjustment" };
+    }
+
+    const token = getStoredToken();
+
+    const applyBalanceUpdate = (nextBalance) => {
+      setUserData((prev) => {
+        const updated = { ...prev, balance: nextBalance };
+        try {
+          localStorage.setItem("userData", JSON.stringify(updated));
+        } catch (error) {
+          console.warn("Failed to persist user data", error);
+        }
+        return updated;
+      });
+    };
+
+    if (!token) {
+      const currentBalance = Number(userData?.balance) || 0;
+      const nextBalance = Math.max(0, currentBalance + delta);
+      applyBalanceUpdate(nextBalance);
+      return { success: true, balance: nextBalance, localOnly: true };
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/User/Balance`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ amount: delta }),
+      });
+
+      const { json: result } = await parseJsonSafely(response);
+      if (!response.ok || !result?.success) {
+        return {
+          success: false,
+          error:
+            result?.message ||
+            `Balance update failed (${response.status})`,
+        };
+      }
+
+      const updatedBalance = Number(result?.data?.balance);
+      const nextBalance = Number.isFinite(updatedBalance)
+        ? updatedBalance
+        : Math.max(0, (Number(userData?.balance) || 0) + delta);
+      applyBalanceUpdate(nextBalance);
+
+      return { success: true, balance: nextBalance, data: result.data };
+    } catch (error) {
+      console.error("Balance update failed:", error);
+      return { success: false, error: error.message || "Balance update failed" };
+    }
+  };
+
+  const updateUserProfile = (updates) => {
+    let persisted = true;
+    setUserData((prev) => {
+      const updated = { ...prev, ...updates };
+      try {
+        localStorage.setItem("userData", JSON.stringify(updated));
+      } catch (error) {
+        console.warn("Failed to persist user data", error);
+        persisted = false;
+      }
+      return updated;
+    });
+    return persisted;
+  };
+
+  const saveUserProfile = async (updates) => {
+    const token = getStoredToken();
+    if (!token) {
+      throw new Error("Not authenticated");
+    }
+
+    const response = await fetch(`${API_BASE_URL}/User/Profile`, {
+      method: "PUT",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: JSON.stringify(updates),
+    });
+
+    const result = await response.json();
+    if (!response.ok || !result?.success) {
+      throw new Error(result?.message || "Failed to update profile");
+    }
+
+    updateUserProfile({ ...updates, ...(result.data || {}) });
+    return result.data;
+  };
+
+  const refreshKYCStatus = async () => {
+    try {
+      const token = getStoredToken();
+      if (!token) {
+        console.warn("🔐 Cannot refresh KYC status: No auth token found");
+        return false;
+      }
+
+      console.log("🔄 Refreshing KYC status from backend...");
+      
+      const response = await fetch(`${API_BASE_URL}/User/Dashboard?t=${Date.now()}`, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        console.warn("⚠️ Failed to refresh KYC status from backend");
+        return false;
+      }
+
+      const result = await response.json();
+      if (result.success && result.data) {
+        const dashboardData = result.data;
+        const kycVerified = dashboardData.kycVerified || dashboardData.isKycVerified || false;
+        const kycStatus = dashboardData.kycStatus || "pending";
+
+        console.log(`✅ Backend KYC Status Updated - Verified: ${kycVerified}, Status: ${kycStatus}`);
+
+        setUserData(prev => {
+          const updated = {
+            ...prev,
+            kycVerified,
+            kycStatus,
+          };
+          localStorage.setItem("userData", JSON.stringify(updated));
+          return updated;
+        });
+
+        return kycVerified;
+      }
+
+      return false;
+    } catch (error) {
+      console.error("💥 Error refreshing KYC status:", error.message);
+      return false;
+    }
+  };
+
+  // Get cleaned token
+  const getAuthToken = () => getStoredToken();
+
+  const hasValidToken = () => {
+    const token = getStoredToken();
+    return !!token && isAuthenticated;
+  };
+
+  // 🔥 FIXED: Get user ID from token if not in userData
+  const getUserId = () => {
+    if (userData.userId) return userData.userId;
+    
+    const token = getStoredToken();
+    if (token) {
+      const userIdFromToken = extractUserIdFromToken(token);
+      if (userIdFromToken) {
+        console.log("🔑 User ID extracted from token:", userIdFromToken);
+        return userIdFromToken;
+      }
+    }
+    
+    console.warn("⚠️ No user ID found");
+    return null;
+  };
+
+  return (
+    <UserContext.Provider
+      value={{
+        userData,
+        isLoading,
+        isAuthenticated,
+        loginUser,
+        registerUser,
+        logoutUser,
+        updateUserBalance,
+        refreshUser,
+        refreshKYCStatus,
+        updateUserProfile,
+        saveUserProfile,
+        getAuthToken,
+        hasValidToken,
+        getUserId,
+      }}
+    >
+      {children}
+    </UserContext.Provider>
+  );
+}
+
+export function useUser() {
+  const context = useContext(UserContext);
+  if (!context) {
+    throw new Error("useUser must be used within a UserProvider");
+  }
+  return context;
+}
