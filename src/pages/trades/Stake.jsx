@@ -29,7 +29,7 @@ import cp8 from "../../pictures/cp8.avif";
 import cp9 from "../../pictures/cp9.avif";
 
 const STAKING_STORAGE_KEY = "stakingPositionsV2";
-const PRICE_REFRESH_MS = 60 * 1000;
+const PRICE_REFRESH_MS = 30 * 1000;
 const HEARTBEAT_MS = 1000;
 const SETTLE_RETRY_MS = 15 * 1000;
 
@@ -44,11 +44,6 @@ const STAKE_ASSETS = [
   { name: "Litecoin", symbol: "LTC", coingeckoId: "litecoin", img: cp8, min: 0.1, max: 1000, apy: 4.8, color: "bg-gray-500" },
   { name: "Ripple", symbol: "XRP", coingeckoId: "ripple", img: cp9, min: 10, max: 100000, apy: 3.7, color: "bg-black" },
 ];
-
-const COINCAP_ASSET_ID_BY_COINGECKO = {
-  "avalanche-2": "avalanche",
-  ripple: "xrp",
-};
 
 const toNumber = (value, fallback = 0) => {
   const parsed = Number(value);
@@ -364,42 +359,20 @@ export default function StakePage() {
       if (!hasPrice) {
         throw new Error("Backend returned empty market prices");
       }
-      setLivePrices(mapped);
-      setPriceSyncAt(Date.now());
-    } catch (primaryError) {
-      try {
-        const fallbackIds = STAKE_ASSETS.map(
-          (asset) => COINCAP_ASSET_ID_BY_COINGECKO[asset.coingeckoId] || asset.coingeckoId
-        ).join(",");
-        const fallbackResponse = await fetch(
-          `https://api.coincap.io/v2/assets?ids=${encodeURIComponent(fallbackIds)}`
-        );
-        if (!fallbackResponse.ok) {
-          throw new Error(`CoinCap fallback failed (${fallbackResponse.status})`);
-        }
-        const fallbackData = await fallbackResponse.json();
-        const rows = Array.isArray(fallbackData?.data) ? fallbackData.data : [];
-        const priceById = new Map(
-          rows.map((row) => [String(row?.id || "").toLowerCase(), toNumber(row?.priceUsd, 0)])
-        );
-
-        const mapped = {};
+      setLivePrices((previous) => {
+        const merged = { ...previous };
         STAKE_ASSETS.forEach((asset) => {
-          const coincapId =
-            COINCAP_ASSET_ID_BY_COINGECKO[asset.coingeckoId] || asset.coingeckoId;
-          mapped[asset.symbol] = toNumber(priceById.get(coincapId), 0);
+          const nextPrice = toNumber(mapped[asset.symbol], 0);
+          if (nextPrice > 0) {
+            merged[asset.symbol] = nextPrice;
+          }
         });
-        const hasFallbackPrice = Object.values(mapped).some((value) => value > 0);
-        if (!hasFallbackPrice) {
-          throw new Error("CoinCap fallback returned empty market prices");
-        }
-
-        setLivePrices(mapped);
-        setPriceSyncAt(Date.now());
-      } catch (fallbackError) {
-        setPriceError("Unable to sync live prices.");
-        console.error("Price sync failed:", primaryError, fallbackError);
-      }
+        return merged;
+      });
+      setPriceSyncAt(Date.now());
+    } catch (error) {
+      setPriceError("Live price sync delayed. Showing last synced prices if available.");
+      console.error("Price sync failed:", error);
     } finally {
       setPricesLoading(false);
     }
