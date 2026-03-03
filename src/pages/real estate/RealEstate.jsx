@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import px17 from "../../pictures/px17.png";
 import px18 from "../../pictures/px18.png";
 import px19 from "../../pictures/px19.png";
@@ -8,6 +8,8 @@ import px22 from "../../pictures/px22.png";
 import ProjectDetail from "../../components/real estate/RealEstatedetails";
 import { useTheme } from "next-themes";
 import { useUser } from "../../context/UserContext";
+import { useTransactions } from "../../context/TransactionContext";
+import { API_BASE_URL } from "../../config/api";
 import {
   FaChartLine,
   FaBuilding,
@@ -303,14 +305,31 @@ const projectDetails = {
 
 export default function RealestPage() {
   const { theme, systemTheme } = useTheme();
-  const { userData, isAuthenticated, updateUserBalance } = useUser();
+  const { userData, isAuthenticated, updateUserBalance, getAuthToken } = useUser();
+  const { addTransaction } = useTransactions();
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [isInvestOpen, setIsInvestOpen] = useState(false);
   const [selectedReal, setSelectedReal] = useState(null);
   const [investmentRecords, setInvestmentRecords] = useState([]);
+  const [isSyncingInvestments, setIsSyncingInvestments] = useState(false);
   const [investmentError, setInvestmentError] = useState("");
   const [investmentSuccess, setInvestmentSuccess] = useState("");
   const [prefersDark, setPrefersDark] = useState(false);
+
+  const parseJsonSafely = async (response) => {
+    const text = await response.text();
+    try {
+      return { json: JSON.parse(text), text };
+    } catch {
+      return { json: null, text };
+    }
+  };
+
+  const getCleanToken = useCallback(() => {
+    const token = getAuthToken?.();
+    if (!token) return null;
+    return token.replace(/^["']|["']$/g, "").trim();
+  }, [getAuthToken]);
 
   const effectiveTheme = theme === "system" ? systemTheme : theme;
   const isDarkMode = useMemo(() => {
@@ -328,19 +347,72 @@ export default function RealestPage() {
     return () => media.removeEventListener("change", handler);
   }, []);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const saved = window.localStorage.getItem("realEstateInvestments");
-    if (!saved) return;
-    try {
-      const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed)) {
-        setInvestmentRecords(parsed);
-      }
-    } catch (error) {
-      console.warn("Unable to parse saved real estate investments", error);
-    }
+  const mapBackendRecordToInvestment = useCallback((row) => {
+    const normalizedStatus = `${row?.status || "Active"}`.toLowerCase();
+    return {
+      id: String(row?._id || row?.id || `real-${Date.now()}`),
+      backendId: String(row?._id || row?.id || ""),
+      projectId: Number(row?.projectId || 0),
+      amount: Number(row?.amount || 0),
+      duration: Number(row?.durationDays || 30),
+      startDate: row?.startDate || row?.createdAt || new Date().toISOString(),
+      endDate:
+        row?.endDate ||
+        new Date(
+          Date.now() + Number(row?.durationDays || 30) * 24 * 60 * 60 * 1000
+        ).toISOString(),
+      status:
+        normalizedStatus === "completed"
+          ? "completed"
+          : normalizedStatus === "cancelled"
+          ? "cancelled"
+          : "pending",
+      roi: Number(row?.roi || 0),
+      reference: row?.reference || "",
+      expectedPayoutUsd: Number(row?.expectedPayoutUsd || 0),
+    };
   }, []);
+
+  const syncInvestmentsFromBackend = useCallback(async () => {
+    const token = getCleanToken();
+    if (!token) return;
+
+    setIsSyncingInvestments(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/RealEstate`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      });
+      const { json: result } = await parseJsonSafely(response);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message || "Failed to sync real estate investments.");
+      }
+
+      const rows = Array.isArray(result?.data) ? result.data : [];
+      const mapped = rows.map(mapBackendRecordToInvestment);
+      setInvestmentRecords(mapped);
+    } catch (error) {
+      console.error("Real estate sync failed:", error);
+      setInvestmentError("Unable to sync real estate records from backend.");
+    } finally {
+      setIsSyncingInvestments(false);
+    }
+  }, [getCleanToken, mapBackendRecordToInvestment]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    syncInvestmentsFromBackend();
+  }, [isAuthenticated, syncInvestmentsFromBackend, userData?.userId, userData?.uid]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    const handleFocusSync = () => syncInvestmentsFromBackend();
+    window.addEventListener("focus", handleFocusSync);
+    return () => window.removeEventListener("focus", handleFocusSync);
+  }, [isAuthenticated, syncInvestmentsFromBackend]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -390,6 +462,13 @@ export default function RealestPage() {
       return { success: false, error: message };
     }
 
+    const token = getCleanToken();
+    if (!token) {
+      const message = "Session expired. Please sign in again.";
+      setInvestmentError(message);
+      return { success: false, error: message };
+    }
+
     const detail = projectDetails[projectId];
     const minimumValue = detail?.minimum
       ? parseFloat(detail.minimum.replace(/[^0-9.]/g, "")) || 0
@@ -411,17 +490,13 @@ export default function RealestPage() {
     }
 
     const timestamp = Date.now();
-    const record = {
-      id: `real-${timestamp}`,
-      projectId,
-      amount,
-      duration: duration || 30,
-      startDate: new Date().toISOString(),
-      endDate: new Date(
-        timestamp + (duration || 30) * 24 * 60 * 60 * 1000
-      ).toISOString(),
-      status: "pending",
-    };
+    const durationDays = duration || 30;
+    const startDate = new Date().toISOString();
+    const endDate = new Date(
+      timestamp + durationDays * 24 * 60 * 60 * 1000
+    ).toISOString();
+    const roiPct = parseFloat(`${real.Roi || 0}`.replace(/[^0-9.]/g, "")) || 0;
+    const expectedPayoutUsd = amount + (amount * roiPct) / 100;
 
     const balanceResult = await updateUserBalance(-amount);
     if (!balanceResult?.success) {
@@ -431,25 +506,101 @@ export default function RealestPage() {
       return { success: false, error: message };
     }
 
-    setInvestmentRecords((prev) => [
-      ...prev.filter((rec) => rec.projectId !== projectId),
-      record,
-    ]);
-    setInvestmentError("");
-    setInvestmentSuccess(
-      `Investment submitted: $${amount.toLocaleString()} toward ${real.name}.`
-    );
+    try {
+      const payload = {
+        projectId,
+        reference: `REAL-${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
+        propertyName: real.name,
+        location: real.type,
+        amount,
+        roi: roiPct,
+        durationDays,
+        startDate,
+        endDate,
+        expectedPayoutUsd,
+        status: "Active",
+      };
 
-    setTimeout(() => {
-      setInvestmentRecords((prev) =>
-        prev.map((rec) =>
-          rec.id === record.id ? { ...rec, status: "completed" } : rec
-        )
+      const response = await fetch(`${API_BASE_URL}/RealEstate/Create`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const { json: result } = await parseJsonSafely(response);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message || "Failed to save investment to backend.");
+      }
+
+      const record = mapBackendRecordToInvestment(result.data);
+      setInvestmentRecords((prev) => [
+        ...prev.filter((rec) => rec.projectId !== projectId),
+        record,
+      ]);
+
+      await addTransaction({
+        type: "debit",
+        category: "realestate",
+        amount,
+        status: "completed",
+        currency: "USD",
+        description: `Real estate investment: ${real.name}`,
+        metadata: {
+          projectId,
+          projectName: real.name,
+          durationDays,
+          roi: roiPct,
+        },
+      });
+
+      setInvestmentError("");
+      setInvestmentSuccess(
+        `Investment submitted: $${amount.toLocaleString()} toward ${real.name}.`
       );
-    }, 3000);
 
-    setIsInvestOpen(false);
-    return { success: true };
+      setTimeout(async () => {
+        try {
+          await fetch(`${API_BASE_URL}/RealEstate/${record.backendId}`, {
+            method: "PATCH",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify({ status: "Completed" }),
+          });
+        } catch (statusError) {
+          console.warn("Real estate completion sync failed:", statusError);
+        } finally {
+          setInvestmentRecords((prev) =>
+            prev.map((rec) =>
+              rec.id === record.id ? { ...rec, status: "completed" } : rec
+            )
+          );
+        }
+      }, 3000);
+
+      setIsInvestOpen(false);
+      return { success: true };
+    } catch (error) {
+      console.error("Real estate investment failed:", error);
+      await updateUserBalance(amount);
+      await addTransaction({
+        type: "credit",
+        category: "realestate",
+        amount,
+        status: "cancelled",
+        currency: "USD",
+        description: `Real estate rollback: ${real.name}`,
+        metadata: { projectId, reason: "create-failed" },
+      });
+      const message = error?.message || "Investment failed. Please try again.";
+      setInvestmentError(message);
+      return { success: false, error: message };
+    }
   };
 
   const recordMap = useMemo(() => {
@@ -472,35 +623,13 @@ export default function RealestPage() {
 
   return (
     <div
-      className={`min-h-screen px-4 py-12 md:px-8 ${
-        isDarkMode
-          ? "bg-gradient-to-br from-slate-900 to-gray-900"
-          : "bg-gradient-to-br from-gray-50 to-blue-50"
+      className={`min-h-screen px-4 py-10 sm:px-6 lg:px-8 ${
+        isDarkMode ? "bg-zinc-950" : "bg-gray-50"
       }`}
     >
-      <div className="max-w-7xl mx-auto">
-        <div className="text-center mb-12">
-          <h1
-            className={`text-4xl md:text-5xl font-bold mb-4 bg-clip-text text-transparent bg-gradient-to-r ${
-              isDarkMode
-                ? "from-cyan-400 to-blue-500"
-                : "from-blue-600 to-indigo-700"
-            }`}
-          >
-            Real Estate Investments
-          </h1>
-          <p
-            className={`max-w-2xl mx-auto text-lg ${
-              isDarkMode ? "text-cyan-200" : "text-blue-700"
-            }`}
-          >
-            Invest in premium properties and earn passive income with
-            predictable returns
-          </p>
-        </div>
-
+      <div className="w-full">
         {(investmentError || investmentSuccess) && (
-          <div className="max-w-3xl mx-auto mb-8 space-y-2">
+          <div className="w-full mb-8 space-y-2">
             {investmentError && (
               <div className="rounded-2xl bg-red-900/20 border border-red-500/50 text-red-300 px-4 py-3 text-sm">
                 {investmentError}
@@ -511,6 +640,11 @@ export default function RealestPage() {
                 {investmentSuccess}
               </div>
             )}
+          </div>
+        )}
+        {isSyncingInvestments && (
+          <div className="w-full mb-6 text-xs text-cyan-400">
+            Syncing investment records from backend...
           </div>
         )}
 

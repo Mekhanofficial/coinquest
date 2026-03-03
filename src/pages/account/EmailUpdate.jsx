@@ -47,8 +47,8 @@ export default function EmailUpdatePage() {
   };
 
   return (
-    <div className="min-h-screen pt-10 bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">      
-      <div className="max-w-md mx-auto px-4 py-10">
+    <div className="min-h-screen pt-10 bg-gray-50 dark:bg-zinc-950">      
+      <div className="w-full px-4 py-10 sm:px-6 lg:px-8">
         <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl overflow-hidden transition-all duration-300 hover:shadow-2xl">
           {/* Header with back button */}
           <div className="bg-gradient-to-r from-blue-500 to-indigo-600 p-6 relative">

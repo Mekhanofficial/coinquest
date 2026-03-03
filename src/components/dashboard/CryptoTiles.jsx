@@ -14,14 +14,14 @@ export default function CryptoTiles({
             theme === "dark"
               ? "from-slate-800 to-slate-900"
               : "from-gray-100 to-gray-200"
-          } rounded-lg p-4 shadow-md hover:shadow-lg transition-all duration-300 border ${
+          } rounded-lg min-h-[112px] p-5 shadow-md hover:shadow-lg transition-all duration-300 border ${
             theme === "dark" ? "border-gray-700" : "border-gray-300"
           } hover:border-teal-500 hover:shadow-teal-500/50 hover:scale-105 flex items-center`}
         >
           <img
             src={crypto.image}
             alt={crypto.name}
-            className="w-8 h-8 lg:w-10 lg:h-10 mr-4"
+            className="w-9 h-9 lg:w-11 lg:h-11 mr-4"
           />
           <div className="flex-1">
             <div className="flex justify-between items-center">

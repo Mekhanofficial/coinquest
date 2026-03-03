@@ -436,7 +436,7 @@ export default function DepositPage() {
   if (authError) {
     return (
       <div className={`min-h-screen flex items-center justify-center px-4 ${
-        theme === "dark" ? "bg-slate-900" : "bg-gray-100"
+        theme === "dark" ? "bg-zinc-950" : "bg-gray-50"
       }`}>
         <div className={`max-w-md w-full p-6 rounded-2xl text-center ${
           theme === "dark" ? "bg-slate-800" : "bg-white"
@@ -459,10 +459,8 @@ export default function DepositPage() {
 
   return (
     <div
-      className={`min-h-screen px-4 lg:px-10 py-14 flex flex-col md:flex-row gap-6 ${
-        theme === "dark"
-          ? "bg-gradient-to-br from-slate-900 to-gray-900 text-gray-200"
-          : "bg-gradient-to-br from-slate-100 to-gray-100 text-gray-800"
+      className={`min-h-screen px-4 py-8 sm:px-6 lg:px-8 flex flex-col gap-6 md:flex-row ${
+        theme === "dark" ? "bg-zinc-950 text-gray-200" : "bg-gray-50 text-gray-800"
       }`}
     >
       {/* Left: Deposit Form */}

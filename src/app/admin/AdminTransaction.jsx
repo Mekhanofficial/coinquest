@@ -1,8 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useTheme } from "next-themes";
 import { useTransactions } from "../../context/TransactionContext";
 import { Button } from "../../components/ui/button";
 import { toast } from "react-hot-toast";
+import PaginationControls from "../../components/ui/PaginationControls";
+import PropTypes from "prop-types";
 
 export default function AdminTransactions({
   defaultFilter = "Pending",
@@ -23,6 +25,8 @@ export default function AdminTransactions({
   const [filter, setFilter] = useState(defaultFilter);
   const [displayedTransactions, setDisplayedTransactions] = useState([]);
   const [processingId, setProcessingId] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => {
     let filtered = [];
@@ -59,6 +63,26 @@ export default function AdminTransactions({
     pendingWithdrawals,
     transactionType,
   ]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter, transactionType, displayedTransactions.length, pageSize]);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(displayedTransactions.length / pageSize)
+  );
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const paginatedTransactions = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return displayedTransactions.slice(start, start + pageSize);
+  }, [displayedTransactions, currentPage, pageSize]);
 
   const handleApprove = async (id) => {
     try {
@@ -150,7 +174,7 @@ export default function AdminTransactions({
             </tr>
           </thead>
           <tbody>
-            {displayedTransactions.map((tx) => (
+            {paginatedTransactions.map((tx) => (
               <tr
                 key={tx.id}
                 className={`border-b ${
@@ -223,7 +247,26 @@ export default function AdminTransactions({
             </p>
           </div>
         )}
+
+        {displayedTransactions.length > 0 && (
+          <PaginationControls
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={displayedTransactions.length}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+            pageSizeOptions={[10, 20, 50]}
+            itemLabel="transactions"
+          />
+        )}
       </div>
     </div>
   );
 }
+
+AdminTransactions.propTypes = {
+  defaultFilter: PropTypes.string,
+  transactionType: PropTypes.string,
+  showAdminActions: PropTypes.bool,
+};

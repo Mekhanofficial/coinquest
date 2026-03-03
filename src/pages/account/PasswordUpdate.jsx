@@ -107,7 +107,7 @@ export default function PasswordUpdate() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-white flex flex-col items-center justify-center p-4">
+    <div className="min-h-screen bg-gray-50 text-slate-900 dark:bg-zinc-950 dark:text-white flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-md bg-slate-800/50 backdrop-blur-lg rounded-2xl border border-slate-700 shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="bg-gradient-to-r from-teal-600 to-emerald-700 p-6 relative">

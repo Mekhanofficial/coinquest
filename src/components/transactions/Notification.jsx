@@ -1,9 +1,8 @@
 // src/pages/NotificationsPage.js
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useNotifications } from "../../context/NotificationContext";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
-  faBell,
   faCheckCircle,
   faTimes,
 } from "@fortawesome/free-solid-svg-icons";
@@ -18,18 +17,17 @@ const NotificationsPage = () => {
     removeAllNotifications,
   } = useNotifications();
   const { theme } = useTheme();
+  const hasAutoMarkedRef = useRef(false);
 
   useEffect(() => {
-    // Mark all as read when page loads
+    if (hasAutoMarkedRef.current) return;
+    hasAutoMarkedRef.current = true;
     markAllAsRead();
-  }, [markAllAsRead]); // Added dependency
+  }, [markAllAsRead]);
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col sm:flex-row sm:justify-between items-start sm:items-center mb-6 gap-2">
-          <h1 className="text-2xl font-bold text-slate-800 dark:text-white">
-            Notifications
-          </h1>
           <div className="flex gap-3">
             <button
               onClick={markAllAsRead}

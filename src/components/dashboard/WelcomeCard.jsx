@@ -1,7 +1,17 @@
+import { useEffect, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faBitcoin } from "@fortawesome/free-brands-svg-icons";
 import { Link } from "react-router-dom";
+import { AnimatePresence, motion } from "framer-motion";
 import { useUser } from "../../context/UserContext";
+
+const ROTATING_TAGLINES = [
+  "Your gateway to the exciting world of cryptocurrency trading.",
+  "Track markets, place trades, and grow your portfolio with confidence.",
+  "Stay ahead with live insights, copy trading, and smart automation.",
+  "Everything you need for trading, staking, mining, and portfolio control.",
+  "Move faster with real-time signals and performance-focused dashboards.",
+];
 
 export default function WelcomeCard({
   theme,
@@ -9,6 +19,15 @@ export default function WelcomeCard({
   secondaryText,
 }) {
   const { userData, isLoading } = useUser();
+  const [taglineIndex, setTaglineIndex] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTaglineIndex((prev) => (prev + 1) % ROTATING_TAGLINES.length);
+    }, 3600);
+
+    return () => clearInterval(interval);
+  }, []);
   
   if (isLoading) {
     return (
@@ -58,9 +77,20 @@ export default function WelcomeCard({
         </span>{" "}
         to coinquest!
       </h1>
-      <p className={`text-sm lg:text-base ${secondaryText} mb-4 text-teal-100`}>
-        Your gateway to the exciting world of cryptocurrency trading.
-      </p>
+      <div className="mb-4 min-h-[48px]">
+        <AnimatePresence mode="wait">
+          <motion.p
+            key={taglineIndex}
+            initial={{ opacity: 0, y: 10, filter: "blur(4px)" }}
+            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+            exit={{ opacity: 0, y: -10, filter: "blur(4px)" }}
+            transition={{ duration: 0.45, ease: "easeInOut" }}
+            className={`text-sm lg:text-base ${secondaryText} text-teal-100`}
+          >
+            {ROTATING_TAGLINES[taglineIndex]}
+          </motion.p>
+        </AnimatePresence>
+      </div>
       <div className="flex items-center justify-between">
         <button
           className={`${

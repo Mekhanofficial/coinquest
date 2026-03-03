@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useTheme } from "next-themes";
 import {
   LineChart,
@@ -28,6 +28,7 @@ import {
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useTransactions } from "../../context/TransactionContext";
 import { useUser } from "../../context/UserContext";
+import { API_BASE_URL } from "../../config/api";
 import { Link } from "react-router-dom";
 
 const performanceData = [
@@ -158,6 +159,8 @@ const SIGNAL_PLANS = [
 export default function DailySignalPage() {
   const { theme } = useTheme();
   const [activeSignal, setActiveSignal] = useState(null);
+  const [signalBackendId, setSignalBackendId] = useState(null);
+  const [isSyncingSignals, setIsSyncingSignals] = useState(false);
   const [showSignalManager, setShowSignalManager] = useState(false);
   const [planAmounts, setPlanAmounts] = useState({});
   const [plans, setPlans] = useState(SIGNAL_PLANS);
@@ -168,25 +171,137 @@ export default function DailySignalPage() {
   const [showInsufficientModal, setShowInsufficientModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const { addTransaction } = useTransactions();
-  const { userData, updateUserBalance } = useUser();
+  const { userData, updateUserBalance, getAuthToken, isAuthenticated } = useUser();
 
-  useEffect(() => {
-    // Load active signal from localStorage
-    const savedSignal = localStorage.getItem("activeSignal");
-    if (savedSignal) {
-      setActiveSignal(JSON.parse(savedSignal));
-      setPlans(
-        plans.map((plan) => ({
-          ...plan,
-          active: plan.id === JSON.parse(savedSignal).id,
-        }))
-      );
+  const parseJsonSafely = async (response) => {
+    const text = await response.text();
+    try {
+      return { json: JSON.parse(text), text };
+    } catch {
+      return { json: null, text };
     }
+  };
+
+  const getCleanToken = useCallback(() => {
+    const token = getAuthToken?.();
+    if (!token) return null;
+    return token.replace(/^["']|["']$/g, "").trim();
+  }, [getAuthToken]);
+
+  const mapSignalRecordToPlan = useCallback((record) => {
+    const planId = Number(record?.planId);
+    let selectedPlan = SIGNAL_PLANS.find((plan) => plan.id === planId) || null;
+
+    if (!selectedPlan && record?.planName) {
+      selectedPlan =
+        SIGNAL_PLANS.find(
+          (plan) =>
+            plan.name.toLowerCase() === `${record.planName}`.toLowerCase()
+        ) || null;
+    }
+
+    if (!selectedPlan) return null;
+
+    return {
+      ...selectedPlan,
+      active: true,
+      purchaseDate:
+        record?.purchaseDate || record?.createdAt || new Date().toISOString(),
+      amountPaid: Number(record?.amountPaid ?? selectedPlan.price),
+      backendId: String(record?._id || record?.id || ""),
+    };
   }, []);
 
+  const syncSignalsFromBackend = useCallback(async () => {
+    const token = getCleanToken();
+    if (!token) return;
+
+    setIsSyncingSignals(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/Signal`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      });
+
+      const { json: result } = await parseJsonSafely(response);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message || "Failed to sync signal plan.");
+      }
+
+      const records = Array.isArray(result?.data) ? result.data : [];
+      const activeRecord =
+        records.find((item) =>
+          `${item?.status || ""}`.toLowerCase().startsWith("active")
+        ) || null;
+
+      const mapped = activeRecord ? mapSignalRecordToPlan(activeRecord) : null;
+      setActiveSignal(mapped);
+      setSignalBackendId(mapped?.backendId || null);
+      setPlans(
+        SIGNAL_PLANS.map((plan) => ({
+          ...plan,
+          active: mapped ? mapped.id === plan.id : false,
+        }))
+      );
+
+      if (mapped) {
+        localStorage.setItem("activeSignal", JSON.stringify(mapped));
+      } else {
+        localStorage.removeItem("activeSignal");
+      }
+    } catch (error) {
+      console.error("Signal sync failed:", error);
+      const savedSignal = localStorage.getItem("activeSignal");
+      if (savedSignal) {
+        try {
+          const parsed = JSON.parse(savedSignal);
+          setActiveSignal(parsed);
+          setPlans(
+            SIGNAL_PLANS.map((plan) => ({
+              ...plan,
+              active: plan.id === parsed.id,
+            }))
+          );
+        } catch {
+          setActiveSignal(null);
+          setPlans(SIGNAL_PLANS);
+        }
+      } else {
+        setActiveSignal(null);
+        setPlans(SIGNAL_PLANS);
+      }
+    } finally {
+      setIsSyncingSignals(false);
+    }
+  }, [getCleanToken, mapSignalRecordToPlan]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    syncSignalsFromBackend();
+  }, [isAuthenticated, syncSignalsFromBackend, userData?.userId, userData?.uid]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    const handleFocusSync = () => syncSignalsFromBackend();
+    window.addEventListener("focus", handleFocusSync);
+    return () => window.removeEventListener("focus", handleFocusSync);
+  }, [isAuthenticated, syncSignalsFromBackend]);
+
   const handlePurchase = async (planId) => {
+    if (isSyncingSignals) return;
     const selectedPlan = plans.find((plan) => plan.id === planId);
     if (!selectedPlan) return;
+    const token = getCleanToken();
+    if (!token) {
+      setErrors((prev) => ({
+        ...prev,
+        [planId]: "Session expired. Please log in again.",
+      }));
+      return;
+    }
 
     const amount = planAmounts[planId] || "";
     const parsedAmount = parseFloat(amount);
@@ -217,6 +332,7 @@ export default function DailySignalPage() {
       return;
     }
 
+    let debited = false;
     try {
       // Deduct the amount from user's balance
       const balanceResult = await updateUserBalance(-parsedAmount);
@@ -228,6 +344,7 @@ export default function DailySignalPage() {
         }));
         return;
       }
+      debited = true;
 
       // Add transaction record with full signal details
       const transactionResult = await addTransaction({
@@ -253,16 +370,51 @@ export default function DailySignalPage() {
         console.warn("Signal transaction logging failed:", transactionResult?.error);
       }
 
+      const signalPayload = {
+        provider: selectedPlan.name,
+        title: `${selectedPlan.name} Signal Plan`,
+        message: selectedPlan.description,
+        asset: "MULTI",
+        action: "SUBSCRIBE",
+        accuracy: parseFloat(selectedPlan.winRate.replace("%", "")) || 0,
+        status: "active",
+        planId: selectedPlan.id,
+        planName: selectedPlan.name,
+        amountPaid: parsedAmount,
+        purchaseDate: new Date().toISOString(),
+        winRate: selectedPlan.winRate,
+        dailySignals: selectedPlan.dailySignals,
+        description: selectedPlan.description,
+        features: selectedPlan.features,
+      };
+
+      const response = await fetch(`${API_BASE_URL}/Signal/Create`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(signalPayload),
+      });
+
+      const { json: result } = await parseJsonSafely(response);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message || "Failed to save signal subscription.");
+      }
+
       const newActiveSignal = {
         ...selectedPlan,
         active: true,
-        purchaseDate: new Date().toISOString(),
+        purchaseDate: signalPayload.purchaseDate,
         amountPaid: parsedAmount,
+        backendId: String(result?.data?._id || result?.data?.id || ""),
       };
 
       setActiveSignal(newActiveSignal);
-      setPlans(
-        plans.map((plan) => ({
+      setSignalBackendId(newActiveSignal.backendId || null);
+      setPlans((prev) =>
+        prev.map((plan) => ({
           ...plan,
           active: plan.id === planId,
         }))
@@ -276,23 +428,64 @@ export default function DailySignalPage() {
       setShowSuccessModal(true);
     } catch (error) {
       console.error("Purchase failed:", error);
+      if (debited) {
+        const rollback = await updateUserBalance(parsedAmount);
+        if (rollback?.success) {
+          await addTransaction({
+            type: "Signal",
+            amount: parsedAmount,
+            description: `Signal subscription rollback: ${selectedPlan.name}`,
+            status: "Cancelled",
+            method: selectedPlan.name,
+            category: "signals",
+            currency: "USD",
+            signalDetails: {
+              planId: selectedPlan.id,
+              planName: selectedPlan.name,
+            },
+          });
+        }
+      }
       setErrors((prev) => ({
         ...prev,
-        [planId]: "Purchase failed. Please try again.",
+        [planId]: error?.message || "Purchase failed. Please try again.",
       }));
     }
   };
 
   const cancelSignal = async () => {
     if (!activeSignal) return;
+    const token = getCleanToken();
+    if (!token) {
+      setSuccessMessage("Session expired. Please log in again.");
+      setShowSuccessModal(true);
+      return;
+    }
 
     try {
-      // Optional: Add partial refund logic here if needed
-      // await updateUserBalance(userData.uid, activeSignal.amountPaid * 0.8, "signal_refund");
+      const backendId =
+        signalBackendId || activeSignal?.backendId || null;
+      if (backendId) {
+        const response = await fetch(`${API_BASE_URL}/Signal/${backendId}`, {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({ status: "cancelled" }),
+        });
+
+        const { json: result } = await parseJsonSafely(response);
+        if (!response.ok || !result?.success) {
+          throw new Error(result?.message || "Failed to cancel signal service.");
+        }
+      }
 
       setActiveSignal(null);
-      setPlans(
-        plans.map((plan) => ({
+      setSignalBackendId(null);
+      setPlans((prev) =>
+        prev.map((plan) => ({
           ...plan,
           active: false,
         }))
@@ -320,8 +513,11 @@ export default function DailySignalPage() {
 
       setSuccessMessage("Signal subscription cancelled successfully");
       setShowSuccessModal(true);
+      await syncSignalsFromBackend();
     } catch (error) {
       console.error("Cancellation failed:", error);
+      setSuccessMessage(error?.message || "Cancellation failed. Please try again.");
+      setShowSuccessModal(true);
     }
   };
 
@@ -571,27 +767,16 @@ export default function DailySignalPage() {
     <>
       <section
         className={`min-h-screen mx-auto px-4 sm:px-6 lg:px-8 py-10 ${
-          theme === "dark"
-            ? "bg-zinc-950"
-            : "bg-gradient-to-br from-slate-50 to-slate-100"
+          theme === "dark" ? "bg-zinc-950" : "bg-gray-50"
         }`}
       >
-        {/* Header */}
-        <div className="max-w-7xl mx-auto mb-12 text-center">
-          <h1 className="text-4xl md:text-5xl font-bold mb-4 bg-gradient-to-r from-teal-500 to-blue-600 bg-clip-text text-transparent">
-            Trading Signal Services
-          </h1>
-          <p
-            className={`text-xl max-w-2xl mx-auto ${
-              theme === "dark" ? "text-gray-300" : "text-gray-600"
-            }`}
-          >
-            Premium trading signals to maximize your profits and minimize risks
-          </p>
-        </div>
-
         {/* Signal Stats Card */}
-        <div className="max-w-7xl mx-auto mb-10">
+        {isSyncingSignals && (
+          <div className="w-full mb-4 text-xs text-cyan-400">
+            Syncing signal subscription from backend...
+          </div>
+        )}
+        <div className="w-full mb-10">
           <div
             className={`rounded-xl shadow-xl overflow-hidden ${
               theme === "dark" ? "bg-slate-900" : "bg-white"
@@ -852,7 +1037,7 @@ export default function DailySignalPage() {
 
         {/* Signal Manager Panel */}
         {showSignalManager && (
-          <div className="max-w-7xl mx-auto mb-12">
+          <div className="w-full mb-12">
             <div
               className={`rounded-xl shadow-xl p-6 ${
                 theme === "dark" ? "bg-slate-900" : "bg-white"
@@ -1076,7 +1261,7 @@ export default function DailySignalPage() {
         )}
 
         {/* Signal Plans Grid */}
-        <div className="max-w-7xl mx-auto">
+        <div className="w-full">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-bold mb-4">Premium Signal Services</h2>
             <p

@@ -537,26 +537,10 @@ export default function WithdrawalPage({ onSuccess }) {
   return (
     <div
       className={`min-h-screen ${
-        theme === "dark"
-          ? "bg-gradient-to-br from-slate-900 to-gray-900"
-          : "bg-gradient-to-br from-slate-100 to-gray-100"
+        theme === "dark" ? "bg-zinc-950" : "bg-gray-50"
       }`}
     >
-      <div className="max-w-6xl mx-auto px-4 py-14">
-        <div className="mb-10">
-          <h1
-            className={`text-3xl font-bold mb-2 ${
-              theme === "dark"
-                ? "text-transparent bg-clip-text bg-gradient-to-r from-teal-400 to-teal-600"
-                : "text-transparent bg-clip-text bg-gradient-to-r from-teal-500 to-teal-700"
-            }`}
-          >
-            Withdraw Funds
-          </h1>
-          <p className={theme === "dark" ? "text-gray-400" : "text-gray-600"}>
-            Choose a withdrawal method and enter your details
-          </p>
-        </div>
+      <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
 
         <div className="flex flex-col lg:flex-row gap-6">
           {/* Payment Method Section */}

@@ -1,12 +1,15 @@
 "use client";
 
 import AdminTableItem from "./AdminTableItem";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../../config/api";
+import PaginationControls from "../../components/ui/PaginationControls";
 
 const AdminTable = () => {
   const [users, setUsers] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   const fetchUsers = async () => {
     try {
@@ -36,6 +39,23 @@ const AdminTable = () => {
     fetchUsers();
   }, []);
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [users.length, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(users.length / pageSize));
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const paginatedUsers = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return users.slice(start, start + pageSize);
+  }, [users, currentPage, pageSize]);
+
   return (
     <div className="overflow-hidden grid grid-rows-[auto_1fr] gap-3">
       <p className="text-neutral-300">
@@ -63,7 +83,7 @@ const AdminTable = () => {
               </thead>
 
               <tbody>
-                {users.map((data, i) => (
+                {paginatedUsers.map((data, i) => (
                   <AdminTableItem
                     key={data.id}
                     id={data.id}
@@ -80,6 +100,21 @@ const AdminTable = () => {
                 ))}
               </tbody>
             </table>
+
+            {users.length > 0 && (
+              <div className="p-3 border-t border-[#97afd5]">
+                <PaginationControls
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  totalItems={users.length}
+                  pageSize={pageSize}
+                  onPageChange={setCurrentPage}
+                  onPageSizeChange={setPageSize}
+                  pageSizeOptions={[10, 20, 50]}
+                  itemLabel="users"
+                />
+              </div>
+            )}
           </>
         )}
       </div>

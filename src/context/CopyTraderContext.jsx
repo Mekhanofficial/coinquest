@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { useUser } from "./UserContext";
 import { API_BASE_URL } from "../config/api";
+import { COPY_TRADERS_SEED } from "../data/copyTradersSeed";
 
 const CopyTradersContext = createContext();
 
@@ -19,6 +20,10 @@ const normalizeTraderId = (value) => {
   }
   return value;
 };
+
+const seedTraderMap = new Map(
+  COPY_TRADERS_SEED.map((trader) => [normalizeTraderId(trader.id), trader])
+);
 
 const parseJsonSafely = async (response) => {
   const text = await response.text();
@@ -53,6 +58,7 @@ const mapRecordToTrader = (record) => {
   const sourceId = normalizeTraderId(
     record?.sourceTraderId ?? snapshot?.id ?? record?._id ?? ""
   );
+  const seededTrader = seedTraderMap.get(sourceId) || null;
   const amount = toNumber(record?.amount, toNumber(snapshot?.investmentAmount, 0));
   const backendId = String(record?._id || record?.id || snapshot?.backendId || "");
 
@@ -61,18 +67,21 @@ const mapRecordToTrader = (record) => {
     id: sourceId || backendId,
     sourceTraderId: sourceId || backendId,
     backendId,
-    traderName: record?.traderName || snapshot?.name || "Trader",
-    name: snapshot?.name || record?.traderName || "Trader",
+    traderName:
+      record?.traderName || seededTrader?.name || snapshot?.name || "Trader",
+    name: seededTrader?.name || snapshot?.name || record?.traderName || "Trader",
+    strategy: seededTrader?.strategy || snapshot?.strategy || "Managed Strategy",
     investmentAmount: amount,
     amount,
     performance: toNumber(record?.performance, toNumber(snapshot?.performance, 0)),
     status: record?.status || "Active",
     copiedAt: record?.createdAt || snapshot?.copiedAt || new Date().toISOString(),
-    image: snapshot?.image || "",
-    profitShare: toNumber(snapshot?.profitShare, 0),
-    winRate: toNumber(snapshot?.winRate, 0),
-    wins: toNumber(snapshot?.wins, 0),
-    losses: toNumber(snapshot?.losses, 0),
+    image: seededTrader?.image || snapshot?.image || "",
+    fallbackImage: seededTrader?.fallbackImage || snapshot?.fallbackImage || "",
+    profitShare: toNumber(snapshot?.profitShare, toNumber(seededTrader?.profitShare, 0)),
+    winRate: toNumber(snapshot?.winRate, toNumber(seededTrader?.winRate, 0)),
+    wins: toNumber(snapshot?.wins, toNumber(seededTrader?.wins, 0)),
+    losses: toNumber(snapshot?.losses, toNumber(seededTrader?.losses, 0)),
     balance: toNumber(snapshot?.balance, amount),
     copyPrice: toNumber(snapshot?.copyPrice, amount),
   };

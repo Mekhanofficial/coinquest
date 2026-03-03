@@ -1,13 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   LineChart,
   Line,
   Area,
-  XAxis,
-  YAxis,
-  Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { formatCurrencyAmount } from "../../utils/currency";
 
 const lineChartData = [
   { value: 10 },
@@ -21,12 +19,11 @@ const lineChartData = [
   { value: 65 },
 ];
 
-const formatCurrency = (value) =>
-  new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
+const formatCurrency = (value, currencyCode) =>
+  formatCurrencyAmount(value || 0, currencyCode, {
+    minimumFractionDigits: 0,
     maximumFractionDigits: 0,
-  }).format(value || 0);
+  });
 
 const formatPercentage = (value) =>
   `${value ? value.toFixed(1) : "0.0"}%`;
@@ -48,10 +45,12 @@ export default function TradeVolumes({
   totalTrades = 0,
   totalCopiedTrades = 0,
   performanceMetrics = {},
+  currencyCode = "USD",
 }) {
   const [hoverIndex, setHoverIndex] = useState(null);
   const [isMounted, setIsMounted] = useState(false);
   const [combinedVolumes, setCombinedVolumes] = useState([]);
+  const [loopPhase, setLoopPhase] = useState(0);
 
   useEffect(() => {
     setIsMounted(true);
@@ -61,14 +60,40 @@ export default function TradeVolumes({
     setCombinedVolumes([...regular, ...copied].slice(-10));
   }, [tradeVolumes, copiedTradeVolumes]);
 
-  const maxVolume = Math.max(...combinedVolumes, 1);
+  useEffect(() => {
+    const loop = setInterval(() => {
+      setLoopPhase((prev) => prev + 1);
+    }, 2200);
+    return () => clearInterval(loop);
+  }, []);
+
+  const chartSeries = useMemo(() => {
+    if (combinedVolumes.length > 0) return combinedVolumes;
+    return lineChartData.map((item) => item.value);
+  }, [combinedVolumes]);
+
+  const animatedLineData = useMemo(
+    () => {
+      const baselineSeries = lineChartData.map((item) => item.value);
+      return baselineSeries.map((value, index) => {
+        const baseline = Number(value) || 0;
+        const swing = 0.95 + 0.08 * Math.sin(loopPhase * 0.85 + index * 0.7);
+        return {
+          value: Math.max(2, baseline * swing),
+        };
+      });
+    },
+    [loopPhase]
+  );
+
+  const maxVolume = Math.max(...chartSeries, 1);
   const combinedTotalTrades = totalTrades + totalCopiedTrades;
   const totalWon = combinedVolumes.reduce((a, b) => a + b, 0) * 0.75;
 
   return (
-    <div className="font-sans">
-      <div className="max-w-4xl mx-auto pb-5">
-        <div className="flex flex-col sm:flex-row gap-5 mt-5">
+    <div className="font-sans min-w-0">
+      <div className="mx-auto w-full max-w-4xl min-w-0 pb-5">
+        <div className="mt-5 flex min-w-0 flex-wrap gap-5">
           {/* Volume Bar Card */}
           <div
             className={`relative rounded-2xl p-5 flex-1 flex gap-6 lg:gap-8 items-center transition-all duration-500 
@@ -77,7 +102,7 @@ export default function TradeVolumes({
                   ? "bg-gray-900 border-gray-700"
                   : "bg-gray-50 border-gray-200"
               } 
-              hover:shadow-[0_10px_40px_-15px_rgba(0,199,255,0.5)] hover:border-teal-400 hover:scale-[1.02] h-[140px] overflow-hidden`}
+              hover:shadow-[0_10px_40px_-15px_rgba(0,199,255,0.5)] hover:border-teal-400 hover:scale-[1.01] h-[140px] overflow-hidden min-w-[280px] min-w-0`}
           >
             <div className="absolute inset-0 opacity-20">
               <div className="absolute -top-[50%] -left-[50%] w-[200%] h-[200%] animate-spin-slow">
@@ -86,7 +111,7 @@ export default function TradeVolumes({
               </div>
             </div>
 
-            <div className="relative z-10 flex flex-col">
+            <div className="relative z-10 flex min-w-0 flex-col">
               <span className="text-3xl lg:text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-teal-400 to-cyan-500">
                 {combinedTotalTrades}
               </span>
@@ -97,9 +122,11 @@ export default function TradeVolumes({
               </span>
             </div>
 
-            <div className="relative z-10 flex mt-2 gap-2 flex-1 h-[80px] items-end">
-              {combinedVolumes.map((amount, i) => {
-                const barHeight = (amount / maxVolume) * 70;
+            <div className="relative z-10 flex min-w-0 mt-2 gap-2 flex-1 h-[84px] items-end overflow-hidden">
+              {chartSeries.map((amount, i) => {
+                const baseBarHeight = (amount / maxVolume) * 74;
+                const wave = 0.88 + 0.18 * Math.sin(loopPhase * 0.95 + i * 0.75);
+                const barHeight = Math.max(8, Math.min(78, baseBarHeight * wave));
                 return (
                   <div
                     key={i}
@@ -112,10 +139,11 @@ export default function TradeVolumes({
                         hoverIndex === i
                           ? "bg-gradient-to-t from-teal-400 to-cyan-500 shadow-[0_0_15px_0px_rgba(0,199,255,0.7)]"
                           : "bg-gradient-to-t from-teal-500/70 to-cyan-400/70"
-                      }`}
+                      } dash-bar-loop`}
                       style={{
                         height: isMounted ? `${barHeight}px` : "0px",
                         transitionDelay: `${i * 50}ms`,
+                        animationDelay: `${i * 120}ms`,
                       }}
                     ></div>
 
@@ -136,7 +164,7 @@ export default function TradeVolumes({
                               : "border-gray-200"
                           }`}
                         ></div>
-                        {`$${amount.toLocaleString()}`}
+                        {formatCurrency(amount, currencyCode)}
                       </div>
                     )}
                   </div>
@@ -153,7 +181,7 @@ export default function TradeVolumes({
                   ? "bg-gray-900 border-gray-700"
                   : "bg-gray-50 border-gray-200"
               }
-              hover:shadow-[0_10px_40px_-15px_rgba(0,199,255,0.5)] hover:border-teal-400 hover:scale-[1.02] h-[140px] overflow-hidden`}
+              hover:shadow-[0_10px_40px_-15px_rgba(0,199,255,0.5)] hover:border-teal-400 hover:scale-[1.01] h-[140px] overflow-hidden min-w-[280px] min-w-0`}
           >
             <div className="relative z-10 flex justify-between items-start">
               <div>
@@ -161,7 +189,7 @@ export default function TradeVolumes({
                   Total Won
                 </p>
                 <p className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-purple-500">
-                  ${Math.floor(totalWon)}
+                  {formatCurrency(Math.floor(totalWon), currencyCode)}
                 </p>
               </div>
               <div
@@ -179,9 +207,9 @@ export default function TradeVolumes({
               </div>
             </div>
 
-            <div className="relative z-10 w-full h-[80px] mt-2">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={lineChartData}>
+            <div className="relative z-10 min-w-0 w-full h-[80px] mt-2 overflow-hidden">
+              <ResponsiveContainer width="100%" height="100%" debounce={120}>
+                <LineChart data={animatedLineData}>
                   <defs>
                     <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#00c8ff" stopOpacity={0.8} />
@@ -198,6 +226,9 @@ export default function TradeVolumes({
                     stroke="none"
                     fill="url(#colorValue)"
                     fillOpacity={0.3}
+                    isAnimationActive
+                    animationDuration={1500}
+                    animationEasing="ease-in-out"
                   />
                   <Line
                     type="monotone"
@@ -210,6 +241,9 @@ export default function TradeVolumes({
                       r: 3,
                       fill: theme === "dark" ? "#0f172a" : "#f8fafc",
                     }}
+                    isAnimationActive
+                    animationDuration={1500}
+                    animationEasing="ease-in-out"
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -218,11 +252,11 @@ export default function TradeVolumes({
         </div>
 
         {/* Stats Footer */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-4 gap-4 mt-5">
           {[
             {
               title: "Avg. Trade Size",
-              value: formatCurrency(performanceMetrics.avgTradeSize),
+              value: formatCurrency(performanceMetrics.avgTradeSize, currencyCode),
               change: computeChangeLabel(performanceMetrics.avgTradeSize),
               positive: true,
             },
@@ -247,7 +281,7 @@ export default function TradeVolumes({
           ].map((stat, index) => (
             <div
               key={index}
-              className={`p-4 rounded-xl transition-all duration-300 ${
+              className={`min-w-0 overflow-hidden p-4 rounded-xl transition-all duration-300 ${
                 theme === "dark"
                   ? "bg-gray-900 border-gray-700"
                   : "bg-white border-gray-200"
@@ -256,10 +290,12 @@ export default function TradeVolumes({
               <p className={`text-sm font-medium ${secondaryText}`}>
                 {stat.title}
               </p>
-              <div className="flex items-baseline gap-2 mt-1">
-                <p className="text-xl font-bold">{stat.value}</p>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <p className="min-w-0 break-words text-lg font-bold sm:text-xl">
+                  {stat.value}
+                </p>
                 <span
-                  className={`text-xs px-1.5 py-0.5 rounded ${
+                  className={`whitespace-nowrap text-xs px-1.5 py-0.5 rounded ${
                     stat.change.startsWith("+")
                       ? theme === "dark"
                         ? "bg-green-900/40 text-green-300"

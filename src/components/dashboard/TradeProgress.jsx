@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { formatCurrencyAmount } from "../../utils/currency";
 
-const TradeProgress = ({ theme, trade, onComplete }) => {
+const TradeProgress = ({ theme, trade, onComplete, currencyCode = "USD" }) => {
   const [progress, setProgress] = useState(trade?.progress || 0);
   const [timeRemaining, setTimeRemaining] = useState(trade?.timeRemaining || 0);
   const [isHovered, setIsHovered] = useState(false);
@@ -161,7 +162,8 @@ const TradeProgress = ({ theme, trade, onComplete }) => {
                 isHovered ? "opacity-100" : "opacity-80"
               }`}
             >
-              {getStatusText()} â€¢ ${trade.amount.toFixed(2)}
+              {getStatusText()} •{" "}
+              {formatCurrencyAmount(trade.amount || 0, currencyCode)}
               {progress >= 100 && result && (
                 <span
                   className={`ml-2 font-bold ${

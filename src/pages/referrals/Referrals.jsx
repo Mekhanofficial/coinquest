@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useTheme } from "next-themes";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -8,7 +8,6 @@ import {
   faChartLine,
   faGift,
   faCoins,
-  faMedal,
   faQrcode,
   faEnvelope,
   faMessage,
@@ -23,10 +22,13 @@ import {
 } from "@fortawesome/free-brands-svg-icons";
 import { API_BASE_URL } from "../../config/api";
 import { useUser } from "../../context/UserContext";
+import { formatCurrencyAmount } from "../../utils/currency";
+import PaginationControls from "../../components/ui/PaginationControls";
 
 export default function ReferralsPage() {
   const { theme } = useTheme();
-  const { getAuthToken } = useUser();
+  const { getAuthToken, userData } = useUser();
+  const referralCurrency = userData?.currencyCode || "USD";
   const [copied, setCopied] = useState(false);
   const [showShareOptions, setShowShareOptions] = useState(false);
   const [activeTab, setActiveTab] = useState("referrals");
@@ -36,6 +38,9 @@ export default function ReferralsPage() {
   const [stats, setStats] = useState({ total: 0, active: 0, earnings: 0 });
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [referralsPage, setReferralsPage] = useState(1);
+  const [rewardsPage, setRewardsPage] = useState(1);
+  const [tablePageSize, setTablePageSize] = useState(10);
 
   const totalReferrals = stats.total || referrals.length;
   const activeReferrals =
@@ -84,6 +89,42 @@ export default function ReferralsPage() {
   useEffect(() => {
     fetchReferralOverview();
   }, []);
+
+  useEffect(() => {
+    setReferralsPage(1);
+  }, [tablePageSize, referrals.length]);
+
+  useEffect(() => {
+    setRewardsPage(1);
+  }, [tablePageSize, rewards.length]);
+
+  const referralsTotalPages = Math.max(
+    1,
+    Math.ceil(referrals.length / tablePageSize)
+  );
+  const rewardsTotalPages = Math.max(1, Math.ceil(rewards.length / tablePageSize));
+
+  useEffect(() => {
+    if (referralsPage > referralsTotalPages) {
+      setReferralsPage(referralsTotalPages);
+    }
+  }, [referralsPage, referralsTotalPages]);
+
+  useEffect(() => {
+    if (rewardsPage > rewardsTotalPages) {
+      setRewardsPage(rewardsTotalPages);
+    }
+  }, [rewardsPage, rewardsTotalPages]);
+
+  const paginatedReferrals = useMemo(() => {
+    const start = (referralsPage - 1) * tablePageSize;
+    return referrals.slice(start, start + tablePageSize);
+  }, [referrals, referralsPage, tablePageSize]);
+
+  const paginatedRewards = useMemo(() => {
+    const start = (rewardsPage - 1) * tablePageSize;
+    return rewards.slice(start, start + tablePageSize);
+  }, [rewards, rewardsPage, tablePageSize]);
 
   const handleCopy = () => {
     if (!referralLink) return;
@@ -142,37 +183,19 @@ export default function ReferralsPage() {
 
   // Format currency
   const formatCurrency = (amount) => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-    }).format(amount);
+    return formatCurrencyAmount(amount, referralCurrency);
   };
 
   return (
     <div
       className={`min-h-screen ${
-        theme === "dark"
-          ? "bg-gradient-to-br from-slate-900 to-slate-800"
-          : "bg-gradient-to-br from-slate-50 to-slate-100"
+        theme === "dark" ? "bg-zinc-950" : "bg-gray-50"
       }`}
     >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* Header */}
-        <div className="text-center mb-12">
-          <h1 className="text-4xl md:text-5xl font-bold mb-4 bg-gradient-to-r from-teal-500 to-blue-600 bg-clip-text text-transparent">
-            Referral Program
-          </h1>
-          <p
-            className={`text-xl max-w-2xl mx-auto ${
-              theme === "dark" ? "text-slate-300" : "text-slate-600"
-            }`}
-          >
-            Invite friends and earn rewards for every successful referral
-          </p>
-        </div>
+      <div className="w-full px-4 py-10 sm:px-6 lg:px-8">
 
         {(errorMessage || isLoading) && (
-          <div className="max-w-3xl mx-auto mb-8 space-y-3">
+          <div className="w-full mb-8 space-y-3">
             {errorMessage && (
               <div className="rounded-2xl bg-red-900/20 border border-red-500/50 text-red-300 px-4 py-3 text-sm">
                 {errorMessage}
@@ -639,7 +662,8 @@ export default function ReferralsPage() {
         >
           <div className="p-6">
             {activeTab === "referrals" ? (
-              <div className="overflow-x-auto">
+              <>
+                <div className="overflow-x-auto">
                 <table className="min-w-full">
                   <thead>
                     <tr
@@ -695,7 +719,7 @@ export default function ReferralsPage() {
                   </thead>
                   <tbody>
                     {referrals.length > 0 ? (
-                      referrals.map((referral) => (
+                      paginatedReferrals.map((referral) => (
                         <tr
                           key={referral.id}
                           className={`border-b ${
@@ -783,9 +807,23 @@ export default function ReferralsPage() {
                     )}
                   </tbody>
                 </table>
-              </div>
+                </div>
+                {referrals.length > 0 && (
+                  <PaginationControls
+                    currentPage={referralsPage}
+                    totalPages={referralsTotalPages}
+                    totalItems={referrals.length}
+                    pageSize={tablePageSize}
+                    onPageChange={setReferralsPage}
+                    onPageSizeChange={setTablePageSize}
+                    pageSizeOptions={[10, 20, 50]}
+                    itemLabel="referrals"
+                  />
+                )}
+              </>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+                <div className="overflow-x-auto">
                 <table className="min-w-full">
                   <thead>
                     <tr
@@ -834,7 +872,7 @@ export default function ReferralsPage() {
                   </thead>
                   <tbody>
                     {rewards.length > 0 ? (
-                      rewards.map((reward) => (
+                      paginatedRewards.map((reward) => (
                         <tr
                           key={reward.id}
                           className={`border-b ${
@@ -905,7 +943,20 @@ export default function ReferralsPage() {
                     )}
                   </tbody>
                 </table>
-              </div>
+                </div>
+                {rewards.length > 0 && (
+                  <PaginationControls
+                    currentPage={rewardsPage}
+                    totalPages={rewardsTotalPages}
+                    totalItems={rewards.length}
+                    pageSize={tablePageSize}
+                    onPageChange={setRewardsPage}
+                    onPageSizeChange={setTablePageSize}
+                    pageSizeOptions={[10, 20, 50]}
+                    itemLabel="rewards"
+                  />
+                )}
+              </>
             )}
           </div>
         </div>

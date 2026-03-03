@@ -143,6 +143,11 @@ const ProgressBar = ({ title, value, max, color }) => {
   );
 };
 
+const formatUsd = (value) =>
+  `$${Number(value || 0).toLocaleString("en-US", {
+    maximumFractionDigits: 0,
+  })}`;
+
 export default function TokenSection() {
   const [values, setValues] = useState([0, 100]);
   const [tokenAmount, setTokenAmount] = useState(500);
@@ -155,6 +160,7 @@ export default function TokenSection() {
 
   const minPrice = values[0] * 3000;
   const maxPrice = values[1] * 3000;
+  const selectedRange = Math.max(0, maxPrice - minPrice);
 
   const handleTokenChange = (e) => {
     const value = Math.min(1000, Math.max(50, parseInt(e.target.value) || 50));
@@ -183,9 +189,9 @@ export default function TokenSection() {
           </p>
         </div>
 
-        <div className="flex flex-col lg:flex-row gap-8">
-          <div className="lg:w-2/3">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="flex flex-col lg:flex-row gap-8 lg:items-stretch">
+          <div className="lg:w-2/3 flex flex-col">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {exchangeRates.map((item, index) => (
                 <ExchangeRateContainer
                   key={index}
@@ -198,7 +204,7 @@ export default function TokenSection() {
               ))}
             </div>
 
-            <div className="mt-8 bg-slate-800/50 backdrop-blur-lg rounded-2xl p-6 border border-slate-700">
+            <div className="mt-8 bg-slate-800/50 backdrop-blur-lg rounded-2xl p-6 border border-slate-700 flex-1">
               <h3 className="text-xl font-bold text-white mb-6 flex items-center">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -239,8 +245,8 @@ export default function TokenSection() {
             </div>
           </div>
 
-          <div className="lg:w-1/3">
-            <div className="bg-gradient-to-br from-slate-800 to-slate-900/50 backdrop-blur-lg rounded-2xl p-6 border border-slate-700 shadow-xl">
+          <div className="lg:w-1/3 flex">
+            <div className="bg-gradient-to-br from-slate-800 to-slate-900/50 backdrop-blur-lg rounded-2xl p-6 border border-slate-700 shadow-xl w-full h-full">
               <div className="flex mb-6 bg-slate-700 rounded-lg p-1">
                 <button
                   className={`flex-1 py-2 rounded-md text-center text-sm font-medium transition-colors ${
@@ -279,47 +285,81 @@ export default function TokenSection() {
               <CountdownTimer />
 
               <div className="mb-6">
-                <div className="flex justify-between text-slate-400 text-sm mb-2">
-                  <span>Min: ${minPrice.toLocaleString()}</span>
-                  <span>Max: ${maxPrice.toLocaleString()}</span>
+                <div className="flex items-center justify-between gap-2 text-xs mb-3">
+                  <span className="rounded-full border border-slate-700 bg-slate-800 px-3 py-1 text-slate-300">
+                    Min: {formatUsd(minPrice)}
+                  </span>
+                  <span className="rounded-full border border-teal-500/40 bg-teal-500/10 px-3 py-1 text-teal-300 font-semibold">
+                    Range: {formatUsd(selectedRange)}
+                  </span>
+                  <span className="rounded-full border border-slate-700 bg-slate-800 px-3 py-1 text-slate-300">
+                    Max: {formatUsd(maxPrice)}
+                  </span>
                 </div>
 
-                <div className="mb-2">
-                  <Range
-                    step={1}
-                    min={0}
-                    max={100}
-                    values={values}
-                    onChange={(newValues) => setValues(newValues)}
-                    renderTrack={({ props, children }) => (
+                <Range
+                  step={1}
+                  min={0}
+                  max={100}
+                  values={values}
+                  onChange={(newValues) => setValues(newValues)}
+                  renderTrack={({ props, children }) => (
+                    <div
+                      onMouseDown={props.onMouseDown}
+                      onTouchStart={props.onTouchStart}
+                      className="w-full py-4"
+                      style={props.style}
+                    >
                       <div
-                        {...props}
-                        className="h-2 w-full bg-slate-700 rounded-full"
+                        ref={props.ref}
+                        className="relative h-3 w-full rounded-full border border-slate-700 bg-slate-900/80 shadow-inner"
                       >
+                        {[0, 50, 100].map((mark) => (
+                          <span
+                            key={mark}
+                            className="absolute top-1/2 h-4 w-px -translate-y-1/2 bg-slate-600/80"
+                            style={{ left: `${mark}%` }}
+                          />
+                        ))}
                         <div
-                          className="h-full bg-gradient-to-r from-teal-500 to-emerald-500 rounded-full"
+                          className="absolute inset-y-0 rounded-full bg-gradient-to-r from-teal-500 via-cyan-400 to-emerald-500 shadow-[0_0_14px_rgba(20,184,166,0.45)]"
                           style={{
-                            width: `${values[1] - values[0]}%`,
                             left: `${values[0]}%`,
+                            width: `${values[1] - values[0]}%`,
                           }}
                         />
                         {children}
                       </div>
-                    )}
-                    renderThumb={({ props, isDragged }) => (
+                    </div>
+                  )}
+                  renderThumb={({ props, isDragged, index }) => (
+                    <div
+                      {...props}
+                      className={`relative h-6 w-6 rounded-full border-2 transition-all duration-200 ${
+                        isDragged
+                          ? "bg-teal-400 border-teal-200 shadow-lg shadow-teal-500/40 scale-110"
+                          : "bg-white border-slate-300 shadow-md"
+                      } focus:outline-none focus:ring-2 focus:ring-teal-500`}
+                    >
                       <div
-                        {...props}
-                        className={`h-5 w-5 rounded-full shadow-lg ${
+                        className={`absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md border px-2 py-0.5 text-[10px] font-semibold ${
                           isDragged
-                            ? "bg-teal-400 ring-2 ring-teal-300"
-                            : "bg-white"
-                        } focus:outline-none focus:ring-2 focus:ring-teal-500`}
+                            ? "bg-teal-500 text-white border-teal-300"
+                            : "bg-slate-900 text-teal-300 border-slate-600"
+                        }`}
+                      >
+                        {formatUsd(index === 0 ? minPrice : maxPrice)}
+                      </div>
+                      <span
+                        className={`absolute inset-1 rounded-full ${
+                          isDragged ? "bg-white" : "bg-teal-200"
+                        }`}
                       />
-                    )}
-                  />
-                </div>
+                    </div>
+                  )}
+                />
 
-                <div className="flex justify-between text-xs text-slate-500">
+                <div className="mt-1 flex justify-between text-[11px] text-slate-500 px-1">
                   <span>$0</span>
                   <span>$150,000</span>
                   <span>$300,000</span>

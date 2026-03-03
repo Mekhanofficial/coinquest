@@ -3,6 +3,7 @@
 import { useTheme } from "next-themes";
 import { useTransactions } from "../../context/TransactionContext";
 import { useEffect, useMemo, useState } from "react";
+import PaginationControls from "../ui/PaginationControls";
 
 const FILTER_STORAGE_KEY = "coinquest:transaction-history-filter";
 const SEARCH_STORAGE_KEY = "coinquest:transaction-history-search";
@@ -41,6 +42,8 @@ export default function TransactionPage() {
   const [searchTerm, setSearchTerm] = useState(() =>
     safeReadStorage(SEARCH_STORAGE_KEY, "")
   );
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   // Refresh transactions when component mounts
   useEffect(() => {
@@ -87,6 +90,26 @@ export default function TransactionPage() {
 
     return list;
   }, [transactions, filter, searchTerm]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter, searchTerm, transactions.length, pageSize]);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(filteredTransactions.length / pageSize)
+  );
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const paginatedTransactions = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredTransactions.slice(start, start + pageSize);
+  }, [filteredTransactions, currentPage, pageSize]);
 
   const statusCounts = useMemo(() => {
     const counts = {
@@ -161,7 +184,7 @@ export default function TransactionPage() {
     }
   };
 
-  const formatAmount = (amount, currency = "USD") => {
+  const formatAmount = (amount) => {
     if (typeof amount === 'number') {
       return `$${amount.toFixed(2)}`;
     }
@@ -173,24 +196,17 @@ export default function TransactionPage() {
 
   return (
     <div
-      className={`min-h-screen p-4 pt-32 ${
-        theme === "dark" ? "bg-slate-950" : "bg-gray-100"
+      className={`min-h-screen px-4 py-8 sm:px-6 lg:px-8 ${
+        theme === "dark" ? "bg-zinc-950" : "bg-gray-50"
       }`}
     >
       <div
-        className={`max-w-6xl mx-auto rounded-xl p-6 ${
+        className={`w-full rounded-xl p-6 ${
           theme === "dark" ? "bg-slate-900" : "bg-white"
         }`}
       >
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
           <div>
-            <h1
-              className={`text-2xl font-bold ${
-                theme === "dark" ? "text-white" : "text-gray-800"
-              }`}
-            >
-              Transaction History
-            </h1>
             <p
               className={`text-sm mt-1 ${
                 theme === "dark" ? "text-gray-400" : "text-gray-600"
@@ -291,7 +307,7 @@ export default function TransactionPage() {
           <div className="overflow-x-auto">
             <div className="flex flex-wrap justify-between items-center text-xs mb-3 uppercase tracking-wide text-gray-500">
               <span>
-                Showing {filteredTransactions.length} of {transactions.length} transactions
+                Showing {paginatedTransactions.length} of {filteredTransactions.length} filtered ({transactions.length} total)
               </span>
               <span>Filter: {activeFilterLabel}</span>
             </div>
@@ -314,7 +330,7 @@ export default function TransactionPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredTransactions.map((tx) => (
+                  {paginatedTransactions.map((tx) => (
                     <tr
                       key={tx.id}
                       className={`border-b ${
@@ -381,6 +397,19 @@ export default function TransactionPage() {
                   {emptyMessage}
                 </p>
               </div>
+            )}
+
+            {filteredTransactions.length > 0 && (
+              <PaginationControls
+                currentPage={currentPage}
+                totalPages={totalPages}
+                totalItems={filteredTransactions.length}
+                pageSize={pageSize}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={setPageSize}
+                pageSizeOptions={[10, 20, 50]}
+                itemLabel="transactions"
+              />
             )}
           </div>
         )}

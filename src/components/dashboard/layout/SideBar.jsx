@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useRef } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faArrowLeft } from "@fortawesome/free-solid-svg-icons";
 import DashboardSidebar from "../../../constants/DashboardSidebar";
@@ -8,9 +8,7 @@ import PropTypes from "prop-types";
 export default function Sidebar({ isSidebarOpen, setIsSidebarOpen }) {
   const { theme } = useTheme();
   const sidebarRef = useRef(null);
-  const [isHovered, setIsHovered] = useState(false);
-
-  const showFullSidebar = isSidebarOpen || isHovered;
+  const showFullSidebar = isSidebarOpen;
 
   const sidebarBg = theme === "dark" ? "bg-zinc-950" : "bg-gray-50";
   const headerBg = theme === "dark" ? "bg-slate-800" : "bg-gray-200";
@@ -34,9 +32,7 @@ export default function Sidebar({ isSidebarOpen, setIsSidebarOpen }) {
           showFullSidebar ? "w-64" : "w-16"
         } ${
           isSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
-        }`}
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
+        } overflow-x-hidden`}
       >
         {/* Inner Wrapper with Spacing */}
         <div className="h-full p-1.5">
@@ -58,9 +54,13 @@ export default function Sidebar({ isSidebarOpen, setIsSidebarOpen }) {
                   <span className="text-teal-400 dark:text-teal-500">FU</span>
                 </h1>
               ) : (
-                <span className="text-xl font-bold text-teal-500 dark:text-teal-600">
+                <button
+                  onClick={() => setIsSidebarOpen(true)}
+                  className={`text-xl font-bold text-teal-500 dark:text-teal-600 rounded-md px-2 py-1 ${hoverBg}`}
+                  aria-label="Expand sidebar"
+                >
                   KF
-                </span>
+                </button>
               )}
               {showFullSidebar && (
                 <button
@@ -76,9 +76,9 @@ export default function Sidebar({ isSidebarOpen, setIsSidebarOpen }) {
             <div
               className={`flex-1 ${
                 showFullSidebar ? "overflow-y-auto" : "overflow-hidden"
-              } mx-2 mb-2`}
+              } mx-2 mb-2 overflow-x-hidden`}
             >
-              <div className="py-1">
+              <div className="py-1 overflow-x-hidden">
                 <DashboardSidebar isCollapsed={!showFullSidebar} />
               </div>
             </div>

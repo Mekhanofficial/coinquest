@@ -1,6 +1,13 @@
-import { useState, useEffect, createContext, useContext } from "react";
+import {
+  useState,
+  useEffect,
+  createContext,
+  useContext,
+  useCallback,
+} from "react";
 import { useTransactions } from "./TransactionContext";
 import { useCopyTraders } from "./CopyTraderContext";
+import { formatCurrencyAmount } from "../utils/currency";
 
 const NotificationContext = createContext();
 
@@ -13,12 +20,14 @@ export const NotificationProvider = ({ children }) => {
   const [processedCopyTraderIds, setProcessedCopyTraderIds] = useState(new Set());
   const { copiedTraders } = useCopyTraders();
 
-  const formatCurrency = (value) =>
-    new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      maximumFractionDigits: 0,
-    }).format(value || 0);
+  const formatCurrency = useCallback(
+    (value, currencyCode = "USD") =>
+      formatCurrencyAmount(value || 0, currencyCode, {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      }),
+    []
+  );
 
   // Load notifications from localStorage
   useEffect(() => {
@@ -62,7 +71,7 @@ export const NotificationProvider = ({ children }) => {
   }, [processedCopyTraderIds]);
 
   // Add new notification - FIXED: Add to end of array for proper display order
-  const addNotification = (message, type = "info", data = {}) => {
+  const addNotification = useCallback((message, type = "info", data = {}) => {
     const newNotification = {
       id: Date.now() + Math.random(), // More unique ID
       text: message,
@@ -76,24 +85,24 @@ export const NotificationProvider = ({ children }) => {
 
     setNotifications((prev) => [...prev, newNotification]); // Add to END for proper display
     setUnreadCount((prev) => prev + 1);
-  };
+  }, []);
 
   // Mark notification as read
-  const markAsRead = (id) => {
+  const markAsRead = useCallback((id) => {
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: true } : n))
     );
     setUnreadCount((prev) => (prev > 0 ? prev - 1 : 0));
-  };
+  }, []);
 
   // Mark all notifications as read
-  const markAllAsRead = () => {
+  const markAllAsRead = useCallback(() => {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
     setUnreadCount(0);
-  };
+  }, []);
 
   // Remove notification
-  const removeNotification = (id) => {
+  const removeNotification = useCallback((id) => {
     setNotifications((prev) => {
       const next = prev.filter((n) => n.id !== id);
       if (typeof window !== "undefined") {
@@ -103,21 +112,21 @@ export const NotificationProvider = ({ children }) => {
       setUnreadCount(newUnread);
       return next;
     });
-  };
+  }, []);
 
   // Remove all notifications
-  const removeAllNotifications = () => {
+  const removeAllNotifications = useCallback(() => {
     setNotifications([]);
     setUnreadCount(0);
     if (typeof window !== "undefined") {
       localStorage.setItem("notifications", "[]");
     }
-  };
+  }, []);
 
   // Get sorted notifications (newest first) for display
-  const getSortedNotifications = () => {
+  const getSortedNotifications = useCallback(() => {
     return [...notifications].sort((a, b) => b.timestamp - a.timestamp);
-  };
+  }, [notifications]);
 
   // Notify when a copy trader is added
   useEffect(() => {
@@ -131,7 +140,10 @@ export const NotificationProvider = ({ children }) => {
 
     newCopies.forEach((trader) => {
       addNotification(
-        `Copy trading ${trader.name} with ${formatCurrency(trader.investmentAmount)}`,
+        `Copy trading ${trader.name} with ${formatCurrency(
+          trader.investmentAmount,
+          trader.currencyCode || trader.currency || "USD"
+        )}`,
         "info",
         {
           amount: trader.investmentAmount,
@@ -145,7 +157,7 @@ export const NotificationProvider = ({ children }) => {
       newCopies.forEach((trader) => next.add(trader.id));
       return next;
     });
-  }, [copiedTraders, processedCopyTraderIds, addNotification]);
+  }, [copiedTraders, processedCopyTraderIds, addNotification, formatCurrency]);
 
   // Handle transaction notifications - FIXED: Prevent duplicates
   useEffect(() => {
@@ -163,30 +175,32 @@ export const NotificationProvider = ({ children }) => {
     newTransactions.forEach((transaction) => {
       let message = "";
       let notificationType = "transaction";
+      const txCurrency = transaction.currency || "USD";
+      const txAmount = formatCurrency(transaction.amount || 0, txCurrency);
 
       try {
         switch (transaction.type.toLowerCase()) {
           case "deposit":
             if (transaction.status === "Completed") {
-              message = `✅ Deposit completed: $${transaction.amount || 0} ${transaction.currency || ''}`;
+              message = `✅ Deposit completed: ${txAmount}`;
               notificationType = "success";
             } else if (transaction.status === "Pending") {
-              message = `⏳ Deposit pending: $${transaction.amount || 0} ${transaction.currency || ''}`;
+              message = `⏳ Deposit pending: ${txAmount}`;
               notificationType = "info";
             } else if (transaction.status === "Failed") {
-              message = `❌ Deposit failed: $${transaction.amount || 0} ${transaction.currency || ''}`;
+              message = `❌ Deposit failed: ${txAmount}`;
               notificationType = "error";
             }
             break;
           case "withdrawal":
             if (transaction.status === "Completed") {
-              message = `✅ Withdrawal completed: $${transaction.amount || 0} ${transaction.currency || ''}`;
+              message = `✅ Withdrawal completed: ${txAmount}`;
               notificationType = "success";
             } else if (transaction.status === "Pending") {
-              message = `⏳ Withdrawal pending: $${transaction.amount || 0} ${transaction.currency || ''}`;
+              message = `⏳ Withdrawal pending: ${txAmount}`;
               notificationType = "info";
             } else if (transaction.status === "Failed") {
-              message = `❌ Withdrawal failed: $${transaction.amount || 0} ${transaction.currency || ''}`;
+              message = `❌ Withdrawal failed: ${txAmount}`;
               notificationType = "error";
             }
             break;
@@ -232,7 +246,7 @@ export const NotificationProvider = ({ children }) => {
     const newIds = newTransactions.map(t => t.id);
     setProcessedTransactionIds(prev => new Set([...prev, ...newIds]));
 
-  }, [transactions, processedTransactionIds]);
+  }, [transactions, processedTransactionIds, addNotification, formatCurrency]);
 
   return (
     <NotificationContext.Provider

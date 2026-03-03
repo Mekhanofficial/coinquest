@@ -5,6 +5,7 @@ TradeForm.propTypes = {
   activeTab: PropTypes.string.isRequired,
   setActiveTab: PropTypes.func.isRequired,
   tradeType: PropTypes.string,
+  tradeTypeOptions: PropTypes.arrayOf(PropTypes.string).isRequired,
   handleTradeTypeChange: PropTypes.func.isRequired,
   assets: PropTypes.arrayOf(PropTypes.string).isRequired,
   selectedAsset: PropTypes.string,
@@ -21,10 +22,17 @@ TradeForm.propTypes = {
   stopLoss: PropTypes.string,
   setStopLoss: PropTypes.func.isRequired,
   duration: PropTypes.string.isRequired,
+  durationOptions: PropTypes.arrayOf(PropTypes.string).isRequired,
   setDuration: PropTypes.func.isRequired,
   error: PropTypes.string,
   handlePlaceOrder: PropTypes.func.isRequired,
   formatCurrency: PropTypes.func.isRequired,
+  isSubmitting: PropTypes.bool,
+};
+
+const toNumber = (value = "") => {
+  const parsed = Number(String(value).replace(/,/g, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
 };
 
 export default function TradeForm({
@@ -32,6 +40,7 @@ export default function TradeForm({
   activeTab,
   setActiveTab,
   tradeType,
+  tradeTypeOptions,
   handleTradeTypeChange,
   assets,
   selectedAsset,
@@ -46,148 +55,108 @@ export default function TradeForm({
   stopLoss,
   setStopLoss,
   duration,
+  durationOptions,
   setDuration,
   error,
   handlePlaceOrder,
   formatCurrency,
+  isSubmitting = false,
 }) {
+  const numericAmount = toNumber(amount);
+  const estimatedProfit = numericAmount * 0.0625;
+  const potentialLoss = numericAmount * 0.0375;
+  const riskReward =
+    potentialLoss > 0 ? (estimatedProfit / potentialLoss).toFixed(2) : "0.00";
+
+  const formatUsd = (value) =>
+    value.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+
   return (
-    <div
-      className={`rounded-xl shadow-sm overflow-hidden ${
-        theme === "dark" ? "bg-gray-800" : "bg-white"
-      }`}
-    >
-      {/* Buy/Sell Tabs */}
-      <div
-        className={`flex border-b ${
-          theme === "dark" ? "border-gray-700" : "border-gray-200"
-        }`}
-      >
-        {["buy", "sell"].map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`flex-1 py-3 font-medium text-center ${
-              activeTab === tab
-                ? theme === "dark"
-                  ? tab === "buy"
-                    ? "bg-blue-600 text-white"
-                    : "bg-red-600 text-white"
-                  : tab === "buy"
-                  ? "bg-blue-500 text-white"
-                  : "bg-red-500 text-white"
-                : theme === "dark"
-                ? "text-gray-300 hover:bg-gray-700"
-                : "text-gray-600 hover:bg-gray-100"
-            }`}
-          >
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
-          </button>
-        ))}
+    <div className="rounded-2xl border border-cq-border dark:border-cq-border-dark bg-cq-panel dark:bg-cq-panel-dark shadow-sm overflow-hidden">
+      <div className="grid grid-cols-2 border-b border-cq-border dark:border-cq-border-dark">
+        {[
+          { key: "buy", label: "Buy" },
+          { key: "sell", label: "Sell" },
+        ].map((tab) => {
+          const active = activeTab === tab.key;
+
+          return (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setActiveTab(tab.key)}
+              className={`py-3 text-sm font-display font-semibold tracking-wide transition ${
+                active
+                  ? tab.key === "buy"
+                    ? "bg-cq-buy text-white"
+                    : "bg-cq-sell text-white"
+                  : "bg-cq-panel-muted dark:bg-cq-panel-muted-dark text-cq-muted dark:text-cq-muted-dark hover:text-cq-text dark:hover:text-cq-text-dark"
+              }`}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
       </div>
 
-      <div className="p-2">
-        <h3
-          className={`text-lg font-semibold mb-4 ${
-            theme === "dark" ? "text-white" : "text-gray-900"
-          }`}
-        >
+      <div className="p-4 sm:p-5 space-y-4">
+        <h3 className="text-lg font-display font-semibold text-cq-text dark:text-cq-text-dark">
           Place Order
         </h3>
 
-        {/* Error Message */}
         {error && (
-          <div
-            className={`mb-4 p-3 rounded-lg text-sm ${
-              theme === "dark"
-                ? "bg-red-900/30 text-red-300"
-                : "bg-red-100 text-red-800"
-            }`}
-          >
+          <div className="rounded-xl border border-cq-sell/30 bg-cq-sell/10 px-3 py-2.5 text-sm text-cq-sell">
             {error}
-            {error.includes("deposit") && (
-              <button
-                onClick={() => (window.location.href = "/deposit")}
-                className={`ml-2 underline ${
-                  theme === "dark" ? "text-blue-400" : "text-blue-600"
-                }`}
-              >
-                Deposit Now
-              </button>
-            )}
           </div>
         )}
 
-        {/* Trade Form */}
-        <div className="space-y-2">
-          {/* Trade Type */}
+        <div className="space-y-3">
           <div>
-            <label
-              className={`block text-sm font-medium mb-1 ${
-                theme === "dark" ? "text-gray-300" : "text-gray-700"
-              }`}
-            >
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-cq-muted dark:text-cq-muted-dark">
               Trade Type
             </label>
             <select
-              className={`w-full p-3 rounded-lg text-sm ${
-                theme === "dark"
-                  ? "bg-gray-700 text-white border-gray-600 focus:border-blue-500 focus:ring-blue-500"
-                  : "bg-white text-gray-900 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
-              } border`}
+              className="w-full rounded-xl border border-cq-border dark:border-cq-border-dark bg-cq-panel-muted dark:bg-cq-panel-muted-dark px-3 py-2.5 text-sm text-cq-text dark:text-cq-text-dark outline-none focus:border-cq-accent"
               value={tradeType}
               onChange={handleTradeTypeChange}
             >
               <option value="">Select trade type</option>
-              <option>VIP Trades</option>
-              <option>Crypto</option>
-              <option>Forex</option>
+              {tradeTypeOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
             </select>
           </div>
 
-          {/* Asset */}
           <div>
-            <label
-              className={`block text-sm font-medium mb-1 ${
-                theme === "dark" ? "text-gray-300" : "text-gray-700"
-              }`}
-            >
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-cq-muted dark:text-cq-muted-dark">
               Asset
             </label>
             <select
-              className={`w-full p-3 rounded-lg text-sm ${
-                theme === "dark"
-                  ? "bg-gray-700 text-white border-gray-600 focus:border-blue-500 focus:ring-blue-500"
-                  : "bg-white text-gray-900 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
-              } border`}
+              className="w-full rounded-xl border border-cq-border dark:border-cq-border-dark bg-cq-panel-muted dark:bg-cq-panel-muted-dark px-3 py-2.5 text-sm text-cq-text dark:text-cq-text-dark outline-none focus:border-cq-accent disabled:opacity-60"
               value={selectedAsset}
               onChange={handleAssetChange}
               disabled={!tradeType}
             >
-              <option value="">Select an asset</option>
-              {assets.map((asset, index) => (
-                <option key={index} value={asset}>
+              <option value="">Select asset</option>
+              {assets.map((asset) => (
+                <option key={asset} value={asset}>
                   {asset}
                 </option>
               ))}
             </select>
           </div>
 
-          {/* Amount */}
           <div>
-            <div className="flex justify-between items-center mb-1">
-              <label
-                className={`block text-sm font-medium ${
-                  theme === "dark" ? "text-gray-300" : "text-gray-700"
-                }`}
-              >
+            <div className="mb-1 flex items-center justify-between gap-3">
+              <label className="text-xs font-semibold uppercase tracking-wide text-cq-muted dark:text-cq-muted-dark">
                 Amount
               </label>
-              <span
-                className={`text-xs ${
-                  theme === "dark" ? "text-gray-400" : "text-gray-500"
-                }`}
-              >
+              <span className="text-xs text-cq-muted dark:text-cq-muted-dark">
                 Balance: $
                 {userData?.balance?.toLocaleString(undefined, {
                   minimumFractionDigits: 2,
@@ -196,49 +165,33 @@ export default function TradeForm({
               </span>
             </div>
             <div className="relative">
-              <span
-                className={`absolute left-3 top-1/2 transform -translate-y-1/2 ${
-                  theme === "dark" ? "text-gray-400" : "text-gray-500"
-                }`}
-              >
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-cq-muted dark:text-cq-muted-dark">
                 $
               </span>
               <input
                 type="text"
                 value={amount}
                 onChange={(e) => setAmount(formatCurrency(e.target.value))}
-                className={`w-full p-3 pl-8 rounded-lg text-sm ${
-                  theme === "dark"
-                    ? "bg-gray-700 text-white border-gray-600 focus:border-blue-500 focus:ring-blue-500"
-                    : "bg-white text-gray-900 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
-                } border`}
+                className="w-full rounded-xl border border-cq-border dark:border-cq-border-dark bg-cq-panel-muted dark:bg-cq-panel-muted-dark py-2.5 pl-8 pr-3 text-sm text-cq-text dark:text-cq-text-dark outline-none focus:border-cq-accent"
                 placeholder="0.00"
               />
             </div>
           </div>
 
-          {/* Lot Size */}
           <div>
-            <label
-              className={`block text-sm font-medium mb-1 ${
-                theme === "dark" ? "text-gray-300" : "text-gray-700"
-              }`}
-            >
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-cq-muted dark:text-cq-muted-dark">
               Lot Size
             </label>
             <div className="grid grid-cols-4 gap-2">
               {[2, 5, 10, 15].map((size) => (
                 <button
                   key={size}
+                  type="button"
                   onClick={() => setLotSize(size)}
-                  className={`py-2 rounded-lg text-sm ${
+                  className={`rounded-lg py-2 text-sm font-semibold transition ${
                     lotSize === size
-                      ? theme === "dark"
-                        ? "bg-blue-600 text-white"
-                        : "bg-blue-500 text-white"
-                      : theme === "dark"
-                      ? "bg-gray-700 hover:bg-gray-600 text-white"
-                      : "bg-gray-100 hover:bg-gray-200 text-gray-800"
+                      ? "bg-cq-info text-white"
+                      : "bg-cq-panel-muted dark:bg-cq-panel-muted-dark text-cq-muted dark:text-cq-muted-dark hover:text-cq-text dark:hover:text-cq-text-dark"
                   }`}
                 >
                   {size} LS
@@ -247,156 +200,84 @@ export default function TradeForm({
             </div>
           </div>
 
-          {/* Take Profit & Stop Loss */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <label
-                className={`block text-sm font-medium mb-1 ${
-                  theme === "dark" ? "text-gray-300" : "text-gray-700"
-                }`}
-              >
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-cq-muted dark:text-cq-muted-dark">
                 Take Profit
               </label>
               <input
                 type="text"
                 value={takeProfit}
                 onChange={(e) => setTakeProfit(e.target.value)}
-                className={`w-full p-3 rounded-lg text-sm ${
-                  theme === "dark"
-                    ? "bg-gray-700 text-white border-gray-600 focus:border-blue-500 focus:ring-blue-500"
-                    : "bg-white text-gray-900 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
-                } border`}
-                placeholder="0.00"
+                className="w-full rounded-xl border border-cq-border dark:border-cq-border-dark bg-cq-panel-muted dark:bg-cq-panel-muted-dark px-3 py-2.5 text-sm text-cq-text dark:text-cq-text-dark outline-none focus:border-cq-accent"
+                placeholder="1.1050"
               />
             </div>
             <div>
-              <label
-                className={`block text-sm font-medium mb-1 ${
-                  theme === "dark" ? "text-gray-300" : "text-gray-700"
-                }`}
-              >
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-cq-muted dark:text-cq-muted-dark">
                 Stop Loss
               </label>
               <input
                 type="text"
                 value={stopLoss}
                 onChange={(e) => setStopLoss(e.target.value)}
-                className={`w-full p-3 rounded-lg text-sm ${
-                  theme === "dark"
-                    ? "bg-gray-700 text-white border-gray-600 focus:border-blue-500 focus:ring-blue-500"
-                    : "bg-white text-gray-900 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
-                } border`}
-                placeholder="0.00"
+                className="w-full rounded-xl border border-cq-border dark:border-cq-border-dark bg-cq-panel-muted dark:bg-cq-panel-muted-dark px-3 py-2.5 text-sm text-cq-text dark:text-cq-text-dark outline-none focus:border-cq-accent"
+                placeholder="1.0925"
               />
             </div>
           </div>
 
-          {/* Duration */}
           <div>
-            <label
-              className={`block text-sm font-medium mb-1 ${
-                theme === "dark" ? "text-gray-300" : "text-gray-700"
-              }`}
-            >
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-cq-muted dark:text-cq-muted-dark">
               Duration
             </label>
             <select
-              className={`w-full p-3 rounded-lg text-sm ${
-                theme === "dark"
-                  ? "bg-gray-700 text-white border-gray-600 focus:border-blue-500 focus:ring-blue-500"
-                  : "bg-white text-gray-900 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
-              } border`}
+              className="w-full rounded-xl border border-cq-border dark:border-cq-border-dark bg-cq-panel-muted dark:bg-cq-panel-muted-dark px-3 py-2.5 text-sm text-cq-text dark:text-cq-text-dark outline-none focus:border-cq-accent"
               value={duration}
               onChange={(e) => setDuration(e.target.value)}
             >
-              <option>5 Minutes</option>
-              <option>10 Minutes</option>
-              <option>15 Minutes</option>
-              <option>30 Minutes</option>
+              {durationOptions.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
             </select>
           </div>
 
-          {/* Summary */}
-          <div
-            className={`p-3 rounded-lg ${
-              theme === "dark" ? "bg-gray-700" : "bg-gray-100"
-            }`}
-          >
-            <div className="flex justify-between py-1">
-              <span
-                className={`text-sm ${
-                  theme === "dark" ? "text-gray-400" : "text-gray-600"
-                }`}
-              >
-                Estimated Profit
-              </span>
-              <span
-                className={`font-medium ${
-                  theme === "dark" ? "text-green-400" : "text-green-600"
-                }`}
-              >
-                +$125.00
-              </span>
+          <div className="rounded-xl border border-cq-border dark:border-cq-border-dark bg-cq-panel-muted/80 dark:bg-cq-panel-muted-dark/80 p-3">
+            <div className="flex items-center justify-between py-1 text-sm">
+              <span className="text-cq-muted dark:text-cq-muted-dark">Estimated Profit</span>
+              <span className="font-semibold text-cq-buy">+${formatUsd(estimatedProfit)}</span>
             </div>
-            <div className="flex justify-between py-1">
-              <span
-                className={`text-sm ${
-                  theme === "dark" ? "text-gray-400" : "text-gray-600"
-                }`}
-              >
-                Potential Loss
-              </span>
-              <span
-                className={`font-medium ${
-                  theme === "dark" ? "text-red-400" : "text-red-600"
-                }`}
-              >
-                -$75.00
-              </span>
+            <div className="flex items-center justify-between py-1 text-sm">
+              <span className="text-cq-muted dark:text-cq-muted-dark">Potential Loss</span>
+              <span className="font-semibold text-cq-sell">-${formatUsd(potentialLoss)}</span>
             </div>
-            <div className="flex justify-between py-1">
-              <span
-                className={`text-sm ${
-                  theme === "dark" ? "text-gray-400" : "text-gray-600"
-                }`}
-              >
-                Risk/Reward
-              </span>
-              <span
-                className={`font-medium ${
-                  theme === "dark" ? "text-yellow-400" : "text-yellow-600"
-                }`}
-              >
-                1:1.67
-              </span>
+            <div className="flex items-center justify-between py-1 text-sm">
+              <span className="text-cq-muted dark:text-cq-muted-dark">Risk / Reward</span>
+              <span className="font-semibold text-cq-warning">1:{riskReward}</span>
             </div>
           </div>
 
-          {/* Warning */}
-          <div
-            className={`p-3 rounded-lg text-sm ${
-              theme === "dark"
-                ? "bg-red-900/30 text-red-300"
-                : "bg-red-100 text-red-800"
-            }`}
-          >
-            Your trade will auto close if SL or TP does not hit.
+          <div className="rounded-xl border border-cq-warning/35 bg-cq-warning/10 px-3 py-2 text-xs text-cq-warning">
+            Active trades close automatically when duration expires if TP/SL does not trigger.
           </div>
 
-          {/* Submit Button */}
           <button
+            type="button"
             onClick={handlePlaceOrder}
-            className={`w-full py-3 rounded-lg font-semibold transition-colors ${
+            disabled={isSubmitting}
+            className={`w-full rounded-xl py-3 text-sm font-display font-semibold text-white transition ${
               activeTab === "buy"
-                ? theme === "dark"
-                  ? "bg-gradient-to-r from-green-600 to-green-800 hover:from-green-500 hover:to-green-700"
-                  : "bg-gradient-to-r from-green-500 to-green-700 hover:from-green-400 hover:to-green-600"
-                : theme === "dark"
-                ? "bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-700"
-                : "bg-gradient-to-r from-red-500 to-red-700 hover:from-red-400 hover:to-red-600"
-            } text-white`}
+                ? "bg-gradient-to-r from-cq-buy to-emerald-700 hover:opacity-95"
+                : "bg-gradient-to-r from-cq-sell to-rose-700 hover:opacity-95"
+            } ${isSubmitting ? "opacity-60 cursor-not-allowed" : ""}`}
           >
-            {activeTab === "buy" ? "Place Buy Order" : "Place Sell Order"}
+            {isSubmitting
+              ? "Submitting Order..."
+              : activeTab === "buy"
+                ? "Place Buy Order"
+                : "Place Sell Order"}
           </button>
         </div>
       </div>

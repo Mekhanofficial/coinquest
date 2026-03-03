@@ -18,15 +18,7 @@ import { useNavigate } from "react-router-dom";
 import { useTheme } from "next-themes";
 import { useTransactions } from "../../context/TransactionContext";
 import { useUser } from "../../context/UserContext";
-
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 2,
-});
-
-const formatCurrency = (value) =>
-  currencyFormatter.format(Number.isFinite(value) ? value : 0);
+import { formatCurrencyAmount } from "../../utils/currency";
 
 const formatCount = (value) =>
   Number.isFinite(value) ? value.toLocaleString() : "0";
@@ -35,6 +27,7 @@ export default function AccountPage() {
   const { theme } = useTheme();
   const { userData, isAuthenticated, logoutUser, isLoading } = useUser();
   const { transactions = [] } = useTransactions();
+  const accountCurrency = userData?.currencyCode || "USD";
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const navigate = useNavigate();
@@ -69,19 +62,19 @@ export default function AccountPage() {
       {
         icon: faWallet,
         title: "Balance",
-        value: formatCurrency(balanceValue),
+        value: formatCurrencyAmount(balanceValue, accountCurrency),
         color: "text-teal-400",
       },
       {
         icon: faChartLine,
         title: "Portfolio",
-        value: formatCurrency(portfolioValue),
+        value: formatCurrencyAmount(portfolioValue, accountCurrency),
         color: "text-emerald-400",
       },
       {
         icon: faMoneyBill,
         title: "Withdrawn",
-        value: formatCurrency(completedWithdrawalsTotal),
+        value: formatCurrencyAmount(completedWithdrawalsTotal, accountCurrency),
         color: "text-teal-400",
       },
       {
@@ -91,7 +84,7 @@ export default function AccountPage() {
         color: "text-purple-400",
       },
     ];
-  }, [userData, completedWithdrawalsTotal, referralCount]);
+  }, [userData, completedWithdrawalsTotal, referralCount, accountCurrency]);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -151,8 +144,8 @@ export default function AccountPage() {
       <div
         className={` pt-10 min-h-screen flex items-center justify-center ${
           theme === "dark"
-            ? "bg-gradient-to-br from-slate-900 via-slate-800 to-slate-950 text-white"
-            : "bg-gradient-to-b from-gray-100 to-gray-200 text-gray-800"
+            ? "bg-zinc-950 text-white"
+            : "bg-gray-50 text-gray-800"
         }`}
       >
         <div className="relative w-full max-w-md px-4">
@@ -213,13 +206,13 @@ export default function AccountPage() {
     <div
       className={`min-h-screen pt-10 ${
         theme === "dark"
-          ? "bg-gradient-to-br from-slate-950 to-slate-900 text-white"
-          : "bg-gradient-to-b from-gray-100 to-gray-200 text-gray-800"
+          ? "bg-zinc-950 text-white"
+          : "bg-gray-50 text-gray-800"
       }`}
     >
       {/* Profile Card */}
-      <div className="container mx-auto px-4 py-8">
-        <div className="max-w-4xl mx-auto bg-slate-800/50 backdrop-blur-sm rounded-2xl border border-slate-700 overflow-hidden shadow-2xl">
+      <div className="w-full px-4 py-8 sm:px-6 lg:px-8">
+        <div className="w-full bg-slate-800/50 backdrop-blur-sm rounded-2xl border border-slate-700 overflow-hidden shadow-2xl">
           <div className="relative h-40 bg-gradient-to-r from-teal-700 to-emerald-700">
             <div className="absolute -bottom-16 left-8">
               {profile.photoURL ? (
@@ -286,7 +279,7 @@ export default function AccountPage() {
         </div>
 
         {/* Quick Actions Grid */}
-        <div className="max-w-4xl mx-auto mt-8 mb-20">
+        <div className="w-full mt-8 mb-20">
           <h2 className="text-xl font-bold mb-4">Quick Actions</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
             <ActionButton

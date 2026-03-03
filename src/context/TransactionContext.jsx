@@ -109,7 +109,7 @@ export function TransactionProvider({ children }) {
     return {
       type: normalizedType,
       amount: amountValue,
-      currency: payload.currency || "USD",
+      currency: payload.currency || userData?.currencyCode || "USD",
       paymentMethod: payload.paymentMethod || payload.method || "",
       status: statusValue,
       details: payload.details || payload.description || "",
@@ -239,7 +239,7 @@ export function TransactionProvider({ children }) {
             id: tx.id || tx._id,
             type: tx.type,
             amount: tx.amount,
-            currency: tx.currency,
+            currency: tx.currency || userData?.currencyCode || "USD",
             method: tx.paymentMethod || tx.method,
             status: tx.status,
             date: tx.createdAt || tx.date,
@@ -285,7 +285,7 @@ export function TransactionProvider({ children }) {
     } finally {
       setLoading(false);
     }
-  }, [getAuthToken, userData?.role]);
+  }, [getAuthToken, userData?.role, userData?.currencyCode]);
 
   // Force refresh with aggressive cache busting
   const forceRefreshTransactions = async () => {

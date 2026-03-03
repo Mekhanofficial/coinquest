@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect } from "react";
 import { API_BASE_URL } from "../config/api";
+import { resolveCurrencyInfo } from "../utils/currency";
 
 export const UserContext = createContext();
 
@@ -17,11 +18,14 @@ const defaultUserData = {
   userId: "",
   phoneNumber: "",
   country: "",
+  currencyCode: "USD",
+  currencySymbol: "$",
   kycVerified: false,
   kycStatus: "pending",
   subscriptionPlan: "Basic",
   role: "user",
-  photoURL: "",
+  stats: {},
+  revenue: {},
 };
 
 const extractSubscriptionPlanFromData = (payload) => {
@@ -54,7 +58,15 @@ const getStoredUserData = () => {
   try {
     const stored = localStorage.getItem("userData");
     if (!stored) return null;
-    return JSON.parse(stored);
+    const parsed = JSON.parse(stored);
+    if (!parsed || typeof parsed !== "object") return null;
+    const { currencyCode, currencySymbol } = resolveCurrencyInfo(parsed);
+    return {
+      ...defaultUserData,
+      ...parsed,
+      currencyCode,
+      currencySymbol,
+    };
   } catch (error) {
     console.warn("Failed to read stored user data", error);
     return null;
@@ -169,6 +181,33 @@ export function UserProvider({ children }) {
     }
   };
 
+  const fetchUserProfileSnapshot = async (token) => {
+    if (!token) return null;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/User/Profile`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const result = await response.json();
+      const profileData = result?.data || result?.user || null;
+      return profileData && typeof profileData === "object"
+        ? profileData
+        : null;
+    } catch (error) {
+      console.warn("Profile fetch skipped:", error?.message || error);
+      return null;
+    }
+  };
+
   const refreshUser = async () => {
     try {
       const token = getStoredToken();
@@ -194,31 +233,77 @@ export function UserProvider({ children }) {
         
         if (result.success && result.data) {
           const dashboardData = result.data;
+          const profileData = await fetchUserProfileSnapshot(token);
+          const { currencyCode, currencySymbol } = resolveCurrencyInfo(
+            dashboardData,
+            profileData,
+            userData
+          );
           
           // 🔥 IMPORTANT: Extract user ID from token
           const userIdFromToken = extractUserIdFromToken(token);
           const dashboardSubscriptionPlan =
             extractSubscriptionPlanFromData(dashboardData) ||
+            extractSubscriptionPlanFromData(profileData) ||
             userData.subscriptionPlan ||
             "Basic";
           
           const rawBalance = dashboardData.balance ?? userData.balance ?? 0;
           const updatedUserData = {
             balance: Math.max(0, Number(rawBalance) || 0),
-            name: dashboardData.firstName || userData.name || "User",
-            email: userData.email || "",
+            name:
+              dashboardData.firstName ||
+              profileData?.firstName ||
+              userData.name ||
+              "User",
+            email:
+              dashboardData.email || profileData?.email || userData.email || "",
             uid: userIdFromToken || userData.uid || "",
-            photoURL: dashboardData.photoURL || userData.photoURL || "",
-            displayName: dashboardData.firstName || userData.displayName || "User",
-            firstName: dashboardData.firstName || userData.firstName || "",
-            lastName: userData.lastName || "",
+            photoURL:
+              dashboardData.photoURL ||
+              profileData?.photoURL ||
+              userData.photoURL ||
+              "",
+            displayName:
+              dashboardData.firstName ||
+              profileData?.firstName ||
+              userData.displayName ||
+              "User",
+            firstName:
+              dashboardData.firstName ||
+              profileData?.firstName ||
+              userData.firstName ||
+              "",
+            lastName:
+              dashboardData.lastName ||
+              profileData?.lastName ||
+              userData.lastName ||
+              "",
             userId: userIdFromToken || userData.userId || "", // 🔥 Use extracted ID
-            phoneNumber: userData.phoneNumber || "",
-            country: userData.country || "",
+            phoneNumber:
+              dashboardData.phoneNumber ||
+              profileData?.phoneNumber ||
+              userData.phoneNumber ||
+              "",
+            country:
+              dashboardData.country ||
+              profileData?.country ||
+              userData.country ||
+              "",
+            currencyCode,
+            currencySymbol,
             subscriptionPlan: dashboardSubscriptionPlan,
             kycVerified: dashboardData.kycVerified || dashboardData.isKycVerified || userData.kycVerified || false,
             kycStatus: dashboardData.kycStatus || userData.kycStatus || "pending",
-            role: dashboardData.role || userData.role || "user",
+            role: dashboardData.role || profileData?.role || userData.role || "user",
+            stats:
+              dashboardData.stats && typeof dashboardData.stats === "object"
+                ? dashboardData.stats
+                : userData.stats || {},
+            revenue:
+              dashboardData.revenue && typeof dashboardData.revenue === "object"
+                ? dashboardData.revenue
+                : userData.revenue || {},
           };
           
           console.log("🔄 Updated user data after dashboard refresh:", updatedUserData);
@@ -282,8 +367,12 @@ export function UserProvider({ children }) {
       const resolvedBalance = Number(userDataFromApi.balance);
       const loginSubscriptionPlan =
         extractSubscriptionPlanFromData(userDataFromApi) || "Basic";
+      const { currencyCode, currencySymbol } = resolveCurrencyInfo(
+        userDataFromApi,
+        userData
+      );
       
-      const newUserData = {
+        const newUserData = {
         uid: userIdFromToken || `user-${Date.now()}`,
         userId: userIdFromToken || `user-${Date.now()}`,
         email: userDataFromApi.email || email,
@@ -295,10 +384,20 @@ export function UserProvider({ children }) {
         displayName: userDataFromApi.firstName || userDataFromApi.name || "User",
         phoneNumber: userDataFromApi.phoneNumber || "",
         country: userDataFromApi.country || "",
+        currencyCode,
+        currencySymbol,
         subscriptionPlan: loginSubscriptionPlan,
-        kycVerified: userDataFromApi.kycVerified || userDataFromApi.isKycVerified || false,
-        kycStatus: userDataFromApi.kycStatus || "pending",
-        role: userDataFromApi.role || "user",
+          kycVerified: userDataFromApi.kycVerified || userDataFromApi.isKycVerified || false,
+          kycStatus: userDataFromApi.kycStatus || "pending",
+          role: userDataFromApi.role || "user",
+          stats:
+            userDataFromApi.stats && typeof userDataFromApi.stats === "object"
+              ? userDataFromApi.stats
+              : {},
+          revenue:
+            userDataFromApi.revenue && typeof userDataFromApi.revenue === "object"
+              ? userDataFromApi.revenue
+              : {},
       };
 
       localStorage.setItem("userData", JSON.stringify(newUserData));
@@ -355,6 +454,10 @@ export function UserProvider({ children }) {
       const resolvedBalance = Number(user.balance);
       const registerSubscriptionPlan =
         extractSubscriptionPlanFromData(user) || "Basic";
+      const { currencyCode, currencySymbol } = resolveCurrencyInfo(
+        user,
+        registrationData
+      );
 
       const newUserData = {
         uid: userIdFromToken || `user-${Date.now()}`,
@@ -366,8 +469,15 @@ export function UserProvider({ children }) {
           balance: Number.isFinite(resolvedBalance) ? resolvedBalance : 0,
           photoURL: user.photoURL || "",
           displayName: `${registrationData.firstName} ${registrationData.lastName}`,
+          phoneNumber: user.phoneNumber || registrationData.phoneNumber || "",
+          country: user.country || registrationData.country || "",
+          currencyCode,
+          currencySymbol,
           subscriptionPlan: registerSubscriptionPlan,
           role: user.role || "user",
+          stats: user.stats && typeof user.stats === "object" ? user.stats : {},
+          revenue:
+            user.revenue && typeof user.revenue === "object" ? user.revenue : {},
       };
 
         storeToken(token);
@@ -480,7 +590,16 @@ export function UserProvider({ children }) {
   const updateUserProfile = (updates) => {
     let persisted = true;
     setUserData((prev) => {
-      const updated = { ...prev, ...updates };
+      const { currencyCode, currencySymbol } = resolveCurrencyInfo(
+        updates,
+        prev
+      );
+      const updated = {
+        ...prev,
+        ...updates,
+        currencyCode,
+        currencySymbol,
+      };
       try {
         localStorage.setItem("userData", JSON.stringify(updated));
       } catch (error) {

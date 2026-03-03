@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
 
 const DEFAULT_MARKET_PAIRS = [
-  { pair: "BTC/USD", change: "+0.00%", price: "$0.00", isPositive: true },
-  { pair: "ETH/USD", change: "+0.00%", price: "$0.00", isPositive: true },
-  { pair: "SOL/USD", change: "+0.00%", price: "$0.00", isPositive: true },
-  { pair: "EUR/USD", change: "+0.00%", price: "0.00", isPositive: true },
-  { pair: "XAU/USD", change: "+0.00%", price: "$0.00", isPositive: true },
+  { pair: "BTC/USD", change: "--", price: "$--", isPositive: true },
+  { pair: "ETH/USD", change: "--", price: "$--", isPositive: true },
+  { pair: "SOL/USD", change: "--", price: "$--", isPositive: true },
+  { pair: "XRP/USD", change: "--", price: "$--", isPositive: true },
 ];
 
 const formatterUSD = new Intl.NumberFormat("en-US", {
@@ -16,16 +15,13 @@ const formatterUSD = new Intl.NumberFormat("en-US", {
 
 const formatPercent = (value) => {
   if (value === null || value === undefined || Number.isNaN(value)) {
-    return "—";
+    return "--";
   }
   const sign = value >= 0 ? "+" : "";
   return `${sign}${value.toFixed(2)}%`;
 };
 
-const formatRate = (value) =>
-  value || value === 0 ? value.toFixed(4) : "—";
-
-export default function MarketData({ theme }) {
+export default function MarketData() {
   const [marketPairs, setMarketPairs] = useState(DEFAULT_MARKET_PAIRS);
 
   useEffect(() => {
@@ -33,30 +29,15 @@ export default function MarketData({ theme }) {
     let isActive = true;
 
     const fetchMarketSnapshot = async () => {
-    const cryptoUrl =
-      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd&include_24hr_change=true";
-      const todayFxUrl =
-        "https://api.exchangerate.host/latest?base=USD&symbols=EUR";
-      const yesterday = new Date(Date.now() - 86400000)
-        .toISOString()
-        .split("T")[0];
-      const yesterdayFxUrl = `https://api.exchangerate.host/${yesterday}?base=USD&symbols=EUR`;
-      const goldUrl = "https://data-asg.goldprice.org/dbXRates/USD";
+      const cryptoUrl =
+        "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,ripple&vs_currencies=usd&include_24hr_change=true";
 
       try {
-        const [cryptoRes, fxRes, fxPrevRes, goldRes] = await Promise.all([
-          fetch(cryptoUrl, { signal: controller.signal }),
-          fetch(todayFxUrl, { signal: controller.signal }),
-          fetch(yesterdayFxUrl, { signal: controller.signal }),
-          fetch(goldUrl, { signal: controller.signal }),
-        ]);
+        const cryptoRes = await fetch(cryptoUrl, { signal: controller.signal });
 
         if (!isActive) return;
 
         const cryptoData = cryptoRes.ok ? await cryptoRes.json() : {};
-        const fxData = fxRes.ok ? await fxRes.json() : null;
-        const fxPrevData = fxPrevRes.ok ? await fxPrevRes.json() : null;
-        const goldData = goldRes.ok ? await goldRes.json() : null;
 
         const nextPairs = [];
 
@@ -90,48 +71,13 @@ export default function MarketData({ theme }) {
           });
         }
 
-        if (fxData?.rates?.EUR) {
-          const latestRate = fxData.rates.EUR;
-          let change = null;
-          const prevRate = fxPrevData?.rates?.EUR;
-          if (prevRate) {
-            change = ((latestRate - prevRate) / prevRate) * 100;
-          }
-
+        if (cryptoData.ripple) {
+          const change = cryptoData.ripple.usd_24h_change;
           nextPairs.push({
-            pair: "EUR/USD",
-            change: change === null ? "—" : formatPercent(change),
-            price: formatRate(latestRate),
-            isPositive: change ? change >= 0 : true,
-          });
-        }
-
-        const goldItem = goldData?.items?.[0];
-        if (goldItem) {
-          const goldPrice = parseFloat(goldItem.xauPrice) || 0;
-          let changeValue = null;
-          if (goldItem.chgXau !== undefined) {
-            changeValue = parseFloat(goldItem.chgXau);
-          } else if (goldItem.change !== undefined) {
-            changeValue = parseFloat(goldItem.change);
-          }
-          let goldChangePercent = null;
-          if (goldPrice && changeValue !== null && !Number.isNaN(changeValue)) {
-            if (Math.abs(changeValue) <= 5) {
-              goldChangePercent = changeValue;
-            } else {
-              goldChangePercent = (changeValue / goldPrice) * 100;
-            }
-          }
-
-          nextPairs.push({
-            pair: "XAU/USD",
-            change:
-              goldChangePercent === null
-                ? "—"
-                : formatPercent(goldChangePercent),
-            price: formatterUSD.format(goldPrice || 0),
-            isPositive: goldChangePercent === null ? true : goldChangePercent >= 0,
+            pair: "XRP/USD",
+            change: formatPercent(change),
+            price: formatterUSD.format(cryptoData.ripple.usd),
+            isPositive: change >= 0,
           });
         }
 
@@ -146,61 +92,45 @@ export default function MarketData({ theme }) {
     };
 
     fetchMarketSnapshot();
+    const refreshId = setInterval(fetchMarketSnapshot, 30000);
 
     return () => {
       isActive = false;
       controller.abort();
+      clearInterval(refreshId);
     };
   }, []);
 
   return (
-    <div
-      className={`mt-6 rounded-xl shadow-sm p-6 ${
-        theme === "dark" ? "bg-gray-800" : "bg-white"
-      }`}
-    >
-      <h3
-        className={`text-lg font-semibold mb-4 ${
-          theme === "dark" ? "text-white" : "text-gray-900"
-        }`}
-      >
-        Market Overview
-      </h3>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div className="mt-6 rounded-2xl border border-cq-border dark:border-cq-border-dark bg-cq-panel dark:bg-cq-panel-dark p-5 sm:p-6 shadow-sm">
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-lg font-display font-semibold text-cq-text dark:text-cq-text-dark">
+          Market Overview
+        </h3>
+        <span className="rounded-full bg-cq-accent-soft px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-cq-accent">
+          Live
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         {marketPairs.map(({ pair, change, price, isPositive }) => (
           <div
             key={pair}
-            className={`p-6 rounded-lg ${
-              theme === "dark" ? "bg-gray-700" : "bg-gray-50"
-            }`}
+            className="rounded-xl border border-cq-border dark:border-cq-border-dark bg-cq-panel-muted dark:bg-cq-panel-muted-dark p-4"
           >
-            <div className="flex justify-between items-center">
-              <span
-                className={`font-medium ${
-                  theme === "dark" ? "text-gray-300" : "text-gray-700"
-                }`}
-              >
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs font-semibold tracking-wide text-cq-muted dark:text-cq-muted-dark">
                 {pair}
               </span>
               <span
-                className={`text-sm ${
-                  isPositive
-                    ? theme === "dark"
-                      ? "text-green-400"
-                      : "text-green-600"
-                    : theme === "dark"
-                    ? "text-red-400"
-                    : "text-red-600"
+                className={`text-xs font-semibold ${
+                  isPositive ? "text-cq-buy" : "text-cq-sell"
                 }`}
               >
                 {change}
               </span>
             </div>
-            <div
-              className={`text-xl font-bold mt-1 ${
-                theme === "dark" ? "text-white" : "text-gray-900"
-              }`}
-            >
+            <div className="mt-2 text-xl font-display font-bold text-cq-text dark:text-cq-text-dark">
               {price}
             </div>
           </div>

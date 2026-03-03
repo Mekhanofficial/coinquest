@@ -44,6 +44,24 @@ const getDurationInMs = (duration) => {
   }
 };
 
+const toTradeId = (tradeOrId) => {
+  if (tradeOrId === null || tradeOrId === undefined) return "";
+
+  if (typeof tradeOrId === "string" || typeof tradeOrId === "number") {
+    return String(tradeOrId).trim();
+  }
+
+  if (typeof tradeOrId === "object") {
+    const directId =
+      tradeOrId.id ?? tradeOrId._id ?? tradeOrId.tradeId ?? tradeOrId.$oid;
+    if (directId !== undefined && directId !== null) {
+      return String(directId).trim();
+    }
+  }
+
+  return "";
+};
+
 const normalizeApiTrade = (trade) => {
   const amount = Number(trade?.amount) || 0;
   const createdAt = trade?.createdAt || trade?.date || trade?.startedAt;
@@ -82,10 +100,13 @@ const normalizeApiTrade = (trade) => {
     ? "Completed"
     : "Active";
   const timeRemaining = Math.max(0, durationMs - elapsed);
+  const stableId =
+    toTradeId(trade) ||
+    `${trade?.asset || "asset"}-${startTime}-${amount}`;
 
   return {
     ...trade,
-    id: trade?.id || trade?._id || trade?.tradeId,
+    id: stableId,
     type: trade?.direction || trade?.type || "buy",
     amount,
     startTime,
@@ -100,7 +121,7 @@ const normalizeApiTrade = (trade) => {
 
 export default function DashPage() {
   const { theme } = useTheme();
-  const { userData, isLoading: userLoading, isAuthenticated, refreshUser, updateUserBalance, getAuthToken } = useUser();
+  const { userData, isLoading: userLoading, isAuthenticated, refreshUser, getAuthToken } = useUser();
 
   const CLEARED_TRADES_KEY = "clearedPlaceTrades";
   const getClearedTradeIds = () => {
@@ -108,7 +129,10 @@ export default function DashPage() {
     try {
       const stored = window.localStorage.getItem(CLEARED_TRADES_KEY);
       const parsed = stored ? JSON.parse(stored) : [];
-      return new Set(Array.isArray(parsed) ? parsed : []);
+      const normalized = Array.isArray(parsed)
+        ? parsed.map((id) => toTradeId(id)).filter(Boolean)
+        : [];
+      return new Set(normalized);
     } catch (error) {
       console.warn("Failed to parse cleared trades", error);
       return new Set();
@@ -120,7 +144,7 @@ export default function DashPage() {
     try {
       window.localStorage.setItem(
         CLEARED_TRADES_KEY,
-        JSON.stringify([...ids])
+        JSON.stringify([...ids].map((id) => toTradeId(id)).filter(Boolean))
       );
     } catch (error) {
       console.warn("Failed to persist cleared trades", error);
@@ -128,10 +152,48 @@ export default function DashPage() {
   };
 
   const addClearedTradeId = (tradeId) => {
+    const normalizedId = toTradeId(tradeId);
+    if (!normalizedId) return;
     const next = getClearedTradeIds();
-    next.add(tradeId);
+    next.add(normalizedId);
     persistClearedTradeIds(next);
   };
+
+  const syncClearedTradeWithBackend = useCallback(
+    async (tradeId, result) => {
+      const normalizedId = toTradeId(tradeId);
+      if (!normalizedId) return;
+
+      const token = getAuthToken?.();
+      if (!token) return;
+
+      const normalizedResult = `${result || ""}`.toLowerCase();
+      const backendResult =
+        normalizedResult === "win"
+          ? "Win"
+          : normalizedResult === "loss"
+          ? "Loss"
+          : "Pending";
+
+      try {
+        await fetch(`${API_BASE_URL}/PlaceTrade/${normalizedId}`, {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            status: "Completed",
+            result: backendResult,
+          }),
+        });
+      } catch (error) {
+        console.warn("Trade clear backend sync failed:", error);
+      }
+    },
+    [getAuthToken]
+  );
   
   const [cryptoData, setCryptoData] = useState([]);
   const [kycStatus, setKycStatus] = useState("not_verified");
@@ -175,7 +237,7 @@ export default function DashPage() {
         const clearedIds = getClearedTradeIds();
         const normalized = (result.data || [])
           .map(normalizeApiTrade)
-          .filter((trade) => !clearedIds.has(trade.id));
+          .filter((trade) => !clearedIds.has(toTradeId(trade.id)));
         setPlaceTrades(normalized);
         setActiveTrades(normalized.filter((trade) => trade.status === "Active"));
       } else {
@@ -295,7 +357,7 @@ export default function DashPage() {
   };
 
   // Get KYC status from UserContext (already fetched from /User/Dashboard)
-  const updateKycStatus = () => {
+  const updateKycStatus = useCallback(() => {
     // 🔥 FIXED: Use userData from UserContext instead of non-existent /Kyc/Status endpoint
     // The KYC status is already available in UserContext from /User/Dashboard
     const kycVerified = userData?.kycVerified || false;
@@ -303,7 +365,7 @@ export default function DashPage() {
     
     console.log("✅ KYC status from UserContext:", { kycVerified, kycStatus });
     setKycStatus(kycVerified ? "verified" : kycStatus);
-  };
+  }, [userData?.kycStatus, userData?.kycVerified]);
 
   // Fetch user data and active trades
   useEffect(() => {
@@ -340,7 +402,7 @@ export default function DashPage() {
       console.log("❌ User not authenticated or loading complete");
       setLoading(false);
     }
-  }, [userLoading, isAuthenticated, userData.uid, lastUpdate]);
+  }, [userLoading, isAuthenticated, userData.uid, lastUpdate, updateKycStatus]);
 
   // Handle KYC submission success
   useEffect(() => {
@@ -363,9 +425,15 @@ export default function DashPage() {
     removeImmediately = false
   ) => {
     if (removeImmediately) {
-      addClearedTradeId(tradeId);
-      setActiveTrades((prev) => prev.filter((t) => t.id !== tradeId));
-      setPlaceTrades((prev) => prev.filter((t) => t.id !== tradeId));
+      const normalizedId = toTradeId(tradeId);
+      addClearedTradeId(normalizedId);
+      setActiveTrades((prev) =>
+        prev.filter((t) => toTradeId(t.id) !== normalizedId)
+      );
+      setPlaceTrades((prev) =>
+        prev.filter((t) => toTradeId(t.id) !== normalizedId)
+      );
+      syncClearedTradeWithBackend(normalizedId, result);
       return;
     }
 
@@ -373,7 +441,6 @@ export default function DashPage() {
     console.warn(
       "⚠️ Trade completion not yet implemented - /Trades/Complete endpoint missing from API"
     );
-    toast.info("Trade completion feature coming soon!");
     return;
     
     /* Original code - disabled until backend implements endpoint
@@ -458,6 +525,7 @@ export default function DashPage() {
   const borderColor = theme === "dark" ? "border-slate-700" : "border-gray-200";
   const textColor = theme === "dark" ? "text-white" : "text-gray-900";
   const secondaryText = theme === "dark" ? "text-gray-300" : "text-gray-600";
+  const dashboardCurrency = userData?.currencyCode || "USD";
 
   // Enhanced KYC verification check using backend status
   const isKycVerified = kycStatus === "verified";
@@ -532,7 +600,7 @@ export default function DashPage() {
           
           <BalanceCard
             balance={userData.balance || 0}
-            currency="USD"
+            currency={dashboardCurrency}
             isKycVerified={isKycVerified || isKycPending}
             theme={theme}
             borderColor={borderColor}
@@ -601,6 +669,7 @@ export default function DashPage() {
             theme={theme}
             borderColor={borderColor}
             secondaryText={secondaryText}
+            currencyCode={dashboardCurrency}
             performanceMetrics={combinedPerformanceMetrics}
             liveTrades={totalLiveTrades}
             copiedTrades={totalCopiedTrades}
@@ -616,6 +685,7 @@ export default function DashPage() {
             totalTrades={activeTrades.length}
             totalCopiedTrades={totalCopiedTrades}
             performanceMetrics={combinedPerformanceMetrics}
+            currencyCode={dashboardCurrency}
           />
         </div>
 
@@ -642,8 +712,9 @@ export default function DashPage() {
                     key={trade.id}
                     theme={theme}
                     trade={trade}
-                    onComplete={(result) =>
-                      handleTradeComplete(trade.id, result)
+                    currencyCode={dashboardCurrency}
+                    onComplete={(result, removeImmediately) =>
+                      handleTradeComplete(trade.id, result, removeImmediately)
                     }
                   />
                 ))}

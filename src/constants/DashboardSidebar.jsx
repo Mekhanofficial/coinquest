@@ -17,6 +17,7 @@ import {
   faSignOutAlt,
   faBitcoinSign,
   faClipboardList,
+  faEnvelope,
 } from "@fortawesome/free-solid-svg-icons";
 
 export default function DashboardSidebar({ isCollapsed }) {
@@ -50,32 +51,33 @@ export default function DashboardSidebar({ isCollapsed }) {
   const userLinks = [
     { to: "/Account", icon: faUserCircle, text: "My Profile" },
     { to: "/VerifyAccount", icon: faUser, text: "Verify Account" },
+    { to: "/Messages", icon: faEnvelope, text: "Messages" },
   ];
 
   const isActive = (path) => location.pathname === path;
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto py-2">
+    <div className="flex h-full flex-col overflow-x-hidden">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden py-2">
         <div className="space-y-1 px-2">
           {mainLinks.map(({ to, icon, text }) => (
             <Link
               key={to}
               to={to}
-              className={`flex items-center p-3 rounded-lg transition-colors ${
+              className={`flex w-full min-w-0 items-center rounded-lg p-3 transition-colors ${
                 isCollapsed ? "justify-center" : "justify-start"
               } ${
                 isActive(to)
                   ? "bg-slate-800 text-teal-500"
-                  : "hover:bg-slate-800 hover:text-teal-500 text-gray-400"
+                  : "text-gray-400 hover:bg-slate-800 hover:text-teal-500"
               }`}
             >
               <FontAwesomeIcon
                 icon={icon}
-                className={`${isCollapsed ? "text-lg" : "text-lg mr-3"}`}
+                className={`${isCollapsed ? "text-lg" : "mr-3 text-lg"}`}
               />
               {!isCollapsed && (
-                <span className="text-sm whitespace-nowrap">{text}</span>
+                <span className="truncate whitespace-nowrap text-sm">{text}</span>
               )}
             </Link>
           ))}
@@ -83,44 +85,45 @@ export default function DashboardSidebar({ isCollapsed }) {
 
         {!isCollapsed && (
           <div className="mt-4 px-3">
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
               Trading
             </h3>
           </div>
         )}
+
         <div className="space-y-1 px-2">
           {tradingLinks.map(({ to, icon, text }, index) => (
             <Link
               key={to}
               to={to}
-              className={`flex items-center p-3 rounded-lg transition-colors ${
+              className={`flex w-full min-w-0 items-center rounded-lg p-3 transition-colors ${
                 isCollapsed && index >= 4
                   ? "hidden"
                   : isCollapsed
-                  ? "justify-center"
-                  : "justify-start"
+                    ? "justify-center"
+                    : "justify-start"
               } ${
                 isActive(to)
                   ? "bg-slate-800 text-teal-500"
-                  : "hover:bg-slate-800 hover:text-teal-500 text-gray-400"
+                  : "text-gray-400 hover:bg-slate-800 hover:text-teal-500"
               }`}
             >
               <FontAwesomeIcon
                 icon={icon}
-                className={`${isCollapsed ? "text-lg" : "text-lg mr-3"}`}
+                className={`${isCollapsed ? "text-lg" : "mr-3 text-lg"}`}
               />
               {!isCollapsed && (
-                <span className="text-sm whitespace-nowrap">{text}</span>
+                <span className="truncate whitespace-nowrap text-sm">{text}</span>
               )}
             </Link>
           ))}
         </div>
       </div>
 
-      <div className="mt-auto space-y-2">
+      <div className="mt-auto space-y-2 pb-1">
         {!isCollapsed && (
           <div className="px-3 pt-4">
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
               Account
             </h3>
           </div>
@@ -129,34 +132,34 @@ export default function DashboardSidebar({ isCollapsed }) {
         <div className="relative">
           <button
             onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-            className={`flex items-center w-full p-3 hover:text-teal-600 hover:bg-slate-800 rounded-lg transition-colors ${
+            className={`flex w-full min-w-0 items-center rounded-lg p-3 transition-colors hover:bg-slate-800 hover:text-teal-600 ${
               isCollapsed ? "justify-center" : "justify-between"
             }`}
             aria-label="User Menu"
           >
-            <span className="flex items-center">
-              <div className="flex items-center justify-center w-8 h-8">
+            <span className="flex min-w-0 items-center">
+              <div className="flex h-8 w-8 items-center justify-center">
                 <FontAwesomeIcon icon={faUser} className="text-xl" />
               </div>
-              {!isCollapsed && <span className="ml-3 text-base">User</span>}
+              {!isCollapsed && <span className="ml-3 truncate text-base">User</span>}
             </span>
             {!isCollapsed && (
-              <span className="text-xs">{isUserMenuOpen ? "▲" : "▼"}</span>
+              <span className="text-xs">{isUserMenuOpen ? "^" : "v"}</span>
             )}
           </button>
 
           {isUserMenuOpen && !isCollapsed && (
-            <div className="mt-1 ml-2 pl-6 border-l border-slate-700 space-y-2">
+            <div className="mt-1 ml-2 space-y-2 border-l border-slate-700 pl-6">
               {userLinks.map(({ to, icon, text }) => (
                 <Link
                   key={to}
                   to={to}
-                  className={`flex items-center p-2 hover:text-teal-600 transition-colors rounded ${
+                  className={`flex min-w-0 items-center rounded p-2 transition-colors hover:text-teal-600 ${
                     isActive(to) ? "text-teal-600" : ""
                   }`}
                 >
-                  <FontAwesomeIcon icon={icon} className="text-lg mr-3" />
-                  <span className="text-sm">{text}</span>
+                  <FontAwesomeIcon icon={icon} className="mr-3 text-lg" />
+                  <span className="truncate text-sm">{text}</span>
                 </Link>
               ))}
             </div>
@@ -165,13 +168,13 @@ export default function DashboardSidebar({ isCollapsed }) {
 
         <Link
           to="/"
-          className={`flex items-center p-3 hover:text-teal-600 hover:bg-slate-800 rounded-lg transition-colors ${
-            isActive("/") ? "text-teal-600 bg-slate-800" : ""
+          className={`flex items-center rounded-lg p-3 transition-colors hover:bg-slate-800 hover:text-teal-600 ${
+            isActive("/") ? "bg-slate-800 text-teal-600" : ""
           } ${isCollapsed ? "justify-center" : "justify-start"}`}
           aria-label="Logout"
           title={isCollapsed ? "Logout" : undefined}
         >
-          <div className="flex items-center justify-center w-8 h-8">
+          <div className="flex h-8 w-8 items-center justify-center">
             <FontAwesomeIcon icon={faSignOutAlt} className="text-xl" />
           </div>
           {!isCollapsed && <span className="ml-3 text-base">Logout</span>}

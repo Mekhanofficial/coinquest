@@ -1,11 +1,50 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useTheme } from "next-themes";
+import { useNavigate } from "react-router-dom";
 import { useUser } from "../../context/UserContext";
 import ChartSection from "../../components/PlaceTrade/ChartSection";
 import MarketData from "../../components/PlaceTrade/MarketData";
 import TradeForm from "../../components/PlaceTrade/TradeForm";
 import RecentTrades from "../../components/PlaceTrade/RecentTrades";
+import TradeSuccessModal from "../../components/PlaceTrade/TradeSuccessModal";
 import { API_BASE_URL } from "../../config/api";
+
+const TRADE_ASSETS = {
+  "VIP Trades": ["BTC/USD", "ETH/USD", "SOL/USD", "EUR/USD"],
+  Crypto: ["BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", "DOGE/USD"],
+  Forex: ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD"],
+};
+
+const TRADE_TYPE_OPTIONS = Object.keys(TRADE_ASSETS);
+const DURATION_OPTIONS = [
+  "5 Minutes",
+  "10 Minutes",
+  "15 Minutes",
+  "30 Minutes",
+  "1 Hour",
+];
+
+const getDurationInMs = (durationValue) => {
+  if (!durationValue) return 5 * 60 * 1000;
+
+  const [value, unit] = durationValue.split(" ");
+  const numericValue = Number.parseInt(value, 10);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) return 5 * 60 * 1000;
+
+  switch ((unit || "minutes").toLowerCase()) {
+    case "minute":
+    case "minutes":
+      return numericValue * 60 * 1000;
+    case "hour":
+    case "hours":
+      return numericValue * 60 * 60 * 1000;
+    case "day":
+    case "days":
+      return numericValue * 24 * 60 * 60 * 1000;
+    default:
+      return 5 * 60 * 1000;
+  }
+};
 
 const formatCurrency = (value) => {
   const cleaned = value.replace(/[^0-9.]/g, "");
@@ -20,122 +59,150 @@ const formatCurrency = (value) => {
   return formattedInteger || "0";
 };
 
+const normalizeTrade = (trade, fallbackDuration, fallbackUserId) => {
+  if (!trade) return null;
+
+  const createdAt = trade.createdAt || trade.date || trade.startedAt;
+  const parsedStart = Number(trade.startTime);
+  const startTime = Number.isFinite(parsedStart) && parsedStart > 0
+    ? parsedStart
+    : createdAt
+      ? new Date(createdAt).getTime()
+      : Date.now();
+  const duration = trade.duration || fallbackDuration || "5 Minutes";
+  const durationMs = Number(trade.durationMs) || getDurationInMs(duration);
+  const direction = (trade.direction || trade.type || "buy").toLowerCase();
+
+  const rawStatus = trade.status || "Active";
+  const result = trade.result || "Pending";
+  const status =
+    rawStatus === "Completed" && result !== "Pending" ? result : rawStatus;
+
+  return {
+    id: trade.id || trade._id || `${startTime}`,
+    type: direction,
+    tradeType: trade.tradeType || "",
+    asset: trade.asset || "",
+    amount: Number(trade.amount) || 0,
+    lotSize: trade.lotSize || "N/A",
+    takeProfit: trade.takeProfit || "N/A",
+    stopLoss: trade.stopLoss || "N/A",
+    duration,
+    status,
+    date: createdAt || new Date().toISOString(),
+    startTime,
+    durationMs,
+    profitLoss: Number(trade.profitLoss) || 0,
+    userId: trade.user || fallbackUserId || "self",
+  };
+};
+
 export default function PlaceTradePage() {
   const { theme } = useTheme();
-  const [tradeType, setTradeType] = useState("");
-  const [assets, setAssets] = useState([]);
-  const [selectedAsset, setSelectedAsset] = useState("");
+  const navigate = useNavigate();
+  const { userData, isAuthenticated, getAuthToken, refreshUser } = useUser();
+
+  const [tradeType, setTradeType] = useState(TRADE_TYPE_OPTIONS[0]);
+  const [assets, setAssets] = useState(TRADE_ASSETS[TRADE_TYPE_OPTIONS[0]] || []);
+  const [selectedAsset, setSelectedAsset] = useState(
+    (TRADE_ASSETS[TRADE_TYPE_OPTIONS[0]] || [])[0] || ""
+  );
   const [activeTab, setActiveTab] = useState("buy");
   const [amount, setAmount] = useState("");
   const [takeProfit, setTakeProfit] = useState("");
   const [stopLoss, setStopLoss] = useState("");
-  const [duration, setDuration] = useState("5 Minutes");
-  const { userData, isAuthenticated, getAuthToken, refreshUser } = useUser();
+  const [duration, setDuration] = useState(DURATION_OPTIONS[0]);
+  const [lotSize, setLotSize] = useState(2);
   const [error, setError] = useState("");
   const [recentTrades, setRecentTrades] = useState([]);
-  const [lotSize, setLotSize] = useState(2);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [nowTick, setNowTick] = useState(Date.now());
+  const [successModal, setSuccessModal] = useState({
+    isOpen: false,
+    trade: null,
+  });
 
-  const tradeAssets = {
-    "VIP Trades": ["VIP Asset 1", "VIP Asset 2", "VIP Asset 3"],
-    Crypto: ["BTC/USD", "ETH/USD", "ETM/USD"],
-    Forex: ["EUR/USD", "GBP/USD", "JPY/USD"],
-  };
-
-  const getDurationInMs = (duration) => {
-    if (!duration) return 5 * 60 * 1000; // default 5 minutes
-    const [value, unit] = duration.split(" ");
-    const numValue = parseInt(value);
-
-    switch (unit.toLowerCase()) {
-      case "minutes":
-        return numValue * 60 * 1000;
-      case "hours":
-        return numValue * 60 * 60 * 1000;
-      case "days":
-        return numValue * 24 * 60 * 60 * 1000;
-      default:
-        return 5 * 60 * 1000;
+  const parseJsonSafely = async (response) => {
+    const text = await response.text();
+    try {
+      return { json: JSON.parse(text), text };
+    } catch {
+      return { json: null, text };
     }
   };
 
-  const normalizeTrade = (trade) => {
-    if (!trade) return trade;
-    const createdAt = trade.createdAt || trade.date || trade.startedAt;
-    const startTime = trade.startTime || (createdAt ? new Date(createdAt).getTime() : Date.now());
-    const durationMs = trade.durationMs || getDurationInMs(trade.duration || duration);
-    const status =
-      trade.status === "Completed" && trade.result
-        ? trade.result
-        : trade.status || "Active";
-
-    return {
-      id: trade.id || trade._id,
-      type: trade.direction || trade.type || "buy",
-      tradeType: trade.tradeType,
-      asset: trade.asset,
-      amount: Number(trade.amount) || 0,
-      lotSize: trade.lotSize || "N/A",
-      takeProfit: trade.takeProfit || "N/A",
-      stopLoss: trade.stopLoss || "N/A",
-      duration: trade.duration || "5 Minutes",
-      status,
-      date: createdAt || new Date().toISOString(),
-      startTime,
-      durationMs,
-      profitLoss: trade.profitLoss || 0,
-      userId: trade.user || userData?.userId || userData?.uid || "self",
-    };
-  };
+  const getCleanToken = useCallback(() => {
+    const token = getAuthToken?.();
+    if (!token) return null;
+    return token.replace(/^["']|["']$/g, "").trim();
+  }, [getAuthToken]);
 
   useEffect(() => {
-    const fetchTrades = async () => {
-      if (!isAuthenticated) {
+    const timer = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const fetchTrades = useCallback(async () => {
+    if (!isAuthenticated) {
+      setRecentTrades([]);
+      return;
+    }
+
+    const token = getCleanToken();
+    if (!token) {
+      setRecentTrades([]);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/PlaceTrade`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      });
+
+      const { json: result } = await parseJsonSafely(response);
+      if (response.ok && result?.success) {
+        const normalized = (result.data || [])
+          .map((trade) =>
+            normalizeTrade(
+              trade,
+              duration,
+              userData?.userId || userData?.uid || "self"
+            )
+          )
+          .filter(Boolean)
+          .slice(0, 12);
+
+        setRecentTrades(normalized);
+      } else {
         setRecentTrades([]);
-        return;
       }
+    } catch (fetchError) {
+      console.error("Failed to fetch trades:", fetchError);
+      setRecentTrades([]);
+    }
+  }, [isAuthenticated, getCleanToken, duration, userData?.userId, userData?.uid]);
 
-      const token = getAuthToken?.();
-      if (!token) {
-        setRecentTrades([]);
-        return;
-      }
-
-      try {
-        const response = await fetch(`${API_BASE_URL}/PlaceTrade`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "application/json",
-          },
-        });
-
-        const result = await response.json();
-        if (response.ok && result?.success) {
-          const normalized = (result.data || [])
-            .map((trade) => normalizeTrade(trade))
-            .slice(0, 10);
-          setRecentTrades(normalized);
-        } else {
-          setRecentTrades([]);
-        }
-      } catch (err) {
-        console.error("Failed to fetch trades:", err);
-        setRecentTrades([]);
-      }
-    };
-
+  useEffect(() => {
     fetchTrades();
-  }, [isAuthenticated, getAuthToken]);
+    const intervalId = setInterval(fetchTrades, 20000);
+    return () => clearInterval(intervalId);
+  }, [fetchTrades]);
 
-  const handleTradeTypeChange = (e) => {
-    const selectedTradeType = e.target.value;
+  const handleTradeTypeChange = (event) => {
+    const selectedTradeType = event.target.value;
     setTradeType(selectedTradeType);
-    setAssets(tradeAssets[selectedTradeType] || []);
-    setSelectedAsset("");
+
+    const nextAssets = TRADE_ASSETS[selectedTradeType] || [];
+    setAssets(nextAssets);
+    setSelectedAsset((prev) => (nextAssets.includes(prev) ? prev : nextAssets[0] || ""));
   };
 
-  const handleAssetChange = (e) => {
-    setSelectedAsset(e.target.value);
+  const handleAssetChange = (event) => {
+    setSelectedAsset(event.target.value);
   };
 
   const handlePlaceOrder = async () => {
@@ -147,45 +214,53 @@ export default function PlaceTradePage() {
     }
 
     if (!tradeType) {
-      setError("Please select a trade type");
+      setError("Please select a trade type.");
       return;
     }
 
     if (!selectedAsset) {
-      setError("Please select an asset");
+      setError("Please select an asset.");
       return;
     }
 
     if (!amount) {
-      setError("Please enter an amount");
+      setError("Please enter an amount.");
       return;
     }
 
-    const sanitizedAmount = amount.replace(/,/g, "");
-    const numericAmount = parseFloat(sanitizedAmount);
-
-    if (isNaN(numericAmount)) {
-      setError("Please enter a valid amount");
+    const numericAmount = Number.parseFloat(amount.replace(/,/g, ""));
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      setError("Please enter a valid amount greater than zero.");
       return;
     }
 
-    if (numericAmount <= 0) {
-      setError("Amount must be greater than 0");
-      return;
-    }
-
-    const userBalance = userData?.balance ?? 0;
+    const userBalance = Number(userData?.balance) || 0;
     if (userBalance < numericAmount) {
       setError("Insufficient funds. Please deposit to your account.");
       return;
     }
 
+    const token = getCleanToken();
+    if (!token) {
+      setError("Session expired. Please log in again.");
+      return;
+    }
+
+    setIsSubmitting(true);
+
     try {
-      const token = getAuthToken?.();
-      if (!token) {
-        setError("Session expired. Please log in again.");
-        return;
-      }
+      const payload = {
+        tradeType,
+        asset: selectedAsset,
+        amount: numericAmount,
+        direction: activeTab,
+        lotSize,
+        takeProfit,
+        stopLoss,
+        duration,
+        startTime: Date.now(),
+        durationMs: getDurationInMs(duration),
+      };
 
       const response = await fetch(`${API_BASE_URL}/PlaceTrade/Create`, {
         method: "POST",
@@ -194,100 +269,86 @@ export default function PlaceTradePage() {
           "Content-Type": "application/json",
           Accept: "application/json",
         },
-        body: JSON.stringify({
-          tradeType,
-          asset: selectedAsset,
-          amount: numericAmount,
-          direction: activeTab,
-          lotSize,
-          takeProfit,
-          stopLoss,
-          duration,
-          startTime: Date.now(),
-          durationMs: getDurationInMs(duration),
-        }),
+        body: JSON.stringify(payload),
       });
 
-      const result = await response.json();
+      const { json: result } = await parseJsonSafely(response);
       if (!response.ok || !result?.success) {
         throw new Error(result?.message || "Failed to place trade");
       }
 
-      if (result.data) {
-        const createdTrade = normalizeTrade(result.data);
-        if (createdTrade) {
-          setRecentTrades((prev) => [createdTrade, ...prev].slice(0, 10));
-        }
-      }
-      await refreshUser?.();
+      const createdTrade = normalizeTrade(
+        result.data,
+        duration,
+        userData?.userId || userData?.uid || "self"
+      ) || {
+        ...payload,
+        id: Date.now(),
+        type: activeTab,
+        status: "Active",
+        date: new Date().toISOString(),
+      };
 
-      alert(
-        `Trade placed successfully! $${numericAmount.toLocaleString()} ${activeTab} order for ${selectedAsset}`
-      );
+      await Promise.all([refreshUser?.(), fetchTrades()]);
+
+      setSuccessModal({
+        isOpen: true,
+        trade: createdTrade,
+      });
 
       setAmount("");
       setTakeProfit("");
       setStopLoss("");
       setLotSize(2);
-      setDuration("5 Minutes");
-    } catch (err) {
-      console.error("Place trade error:", err);
+      setDuration(DURATION_OPTIONS[0]);
+    } catch (placeTradeError) {
+      console.error("Place trade error:", placeTradeError);
       setError(
-        err?.message || "Failed to place trade. Please try again later."
+        placeTradeError?.message ||
+          "Failed to place trade. Please try again later."
       );
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const calculateProgress = (trade) => {
-    if (trade.status !== "Active") return 100;
-    const now = new Date().getTime();
-    const elapsed = now - trade.startTime;
-    return Math.min(100, (elapsed / trade.durationMs) * 100);
+    if (!trade || trade.status !== "Active") return 100;
+    const elapsed = Math.max(0, nowTick - Number(trade.startTime || nowTick));
+    return Math.min(100, (elapsed / Math.max(1, trade.durationMs || 1)) * 100);
   };
 
   const formatTimeRemaining = (trade) => {
-    if (trade.status !== "Active") return "Completed";
-    const now = new Date().getTime();
-    const remaining = trade.startTime + trade.durationMs - now;
+    if (!trade || trade.status !== "Active") return "Completed";
+
+    const remaining = Number(trade.startTime || nowTick) +
+      Number(trade.durationMs || 0) -
+      nowTick;
 
     if (remaining <= 0) return "Closing...";
 
-    const minutes = Math.floor(remaining / (60 * 1000));
-    const seconds = Math.floor((remaining % (60 * 1000)) / 1000);
-
-    return `${minutes}m ${seconds}s`;
+    const minutes = Math.floor(remaining / 60000);
+    const seconds = Math.floor((remaining % 60000) / 1000);
+    return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
   };
 
   return (
     <>
-      <section
-        className={`min-h-screen px-4 sm:px-10 lg:px-10 py-14 ${
-          theme === "dark" ? "bg-gray-900" : "bg-gray-50"
-        }`}
-      >
-        <div className="max-w-7xl mx-auto">
-          <h1
-            className={`text-2xl font-bold mb-6 ${
-              theme === "dark" ? "text-white" : "text-gray-900"
-            }`}
-          >
-            Trading Dashboard
-          </h1>
-
-          <div className="flex flex-col lg:flex-row gap-6">
-            {/* Left Column */}
-            <div className="w-full lg:w-[72%] flex flex-col gap-6">
+      <section className="min-h-screen px-4 py-6 sm:px-6 sm:py-10 lg:px-8 bg-gray-50 dark:bg-zinc-950">
+        <div className="w-full">
+          <div className="flex flex-col xl:flex-row gap-4 sm:gap-6">
+            <div className="w-full xl:w-[74%]">
               <ChartSection theme={theme} selectedAsset={selectedAsset} />
               <MarketData theme={theme} />
             </div>
 
-            {/* Right Column */}
-            <div className="w-full lg:w-[28%]">
+            <div className="w-full xl:w-[26%] xl:sticky xl:top-24 self-start">
               <TradeForm
                 theme={theme}
                 activeTab={activeTab}
                 setActiveTab={setActiveTab}
                 tradeType={tradeType}
+                tradeTypeOptions={TRADE_TYPE_OPTIONS}
                 handleTradeTypeChange={handleTradeTypeChange}
                 assets={assets}
                 selectedAsset={selectedAsset}
@@ -302,24 +363,34 @@ export default function PlaceTradePage() {
                 stopLoss={stopLoss}
                 setStopLoss={setStopLoss}
                 duration={duration}
+                durationOptions={DURATION_OPTIONS}
                 setDuration={setDuration}
                 error={error}
                 handlePlaceOrder={handlePlaceOrder}
                 formatCurrency={formatCurrency}
+                isSubmitting={isSubmitting}
               />
-
-            
             </div>
-            
           </div>
-            <RecentTrades
-                theme={theme}
-                recentTrades={recentTrades}
-                calculateProgress={calculateProgress}
-                formatTimeRemaining={formatTimeRemaining}
-              />
+
+          <RecentTrades
+            theme={theme}
+            recentTrades={recentTrades}
+            calculateProgress={calculateProgress}
+            formatTimeRemaining={formatTimeRemaining}
+          />
         </div>
       </section>
+
+      <TradeSuccessModal
+        isOpen={successModal.isOpen}
+        trade={successModal.trade}
+        onClose={() => setSuccessModal({ isOpen: false, trade: null })}
+        onViewTrades={() => {
+          setSuccessModal({ isOpen: false, trade: null });
+          navigate("/TradesRoi");
+        }}
+      />
     </>
   );
 }

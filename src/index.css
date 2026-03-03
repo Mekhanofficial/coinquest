@@ -1,3 +1,5 @@
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -284,7 +286,7 @@ body {
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans;
   }
 }
 
@@ -338,6 +340,41 @@ body {
 
 .animate-float {
   animation: float 4s ease-in-out infinite;
+}
+
+@keyframes dash-bar-wave {
+  0%,
+  100% {
+    transform: scaleY(0.96);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scaleY(1.08);
+    opacity: 1;
+  }
+}
+
+.dash-bar-loop {
+  transform-origin: bottom center;
+  animation: dash-bar-wave 2.6s ease-in-out infinite;
+}
+
+@keyframes dash-line-sweep {
+  0% {
+    transform: translateX(-30%);
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 0.5;
+  }
+  100% {
+    transform: translateX(130%);
+    opacity: 0.2;
+  }
+}
+
+.dash-line-sweep {
+  animation: dash-line-sweep 2.4s linear infinite;
 }
 
 

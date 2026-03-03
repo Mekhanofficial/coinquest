@@ -17,6 +17,7 @@ import { useTheme } from "next-themes";
 import { useUser } from "../../context/UserContext";
 import { useNotifications } from "../../context/NotificationContext";
 import { useTransactions } from "../../context/TransactionContext";
+import { API_BASE_URL } from "../../config/api";
 
 const MINING_CYCLE_MS = 3 * 60 * 1000;
 const TICK_INTERVAL_MS = 1000;
@@ -246,7 +247,7 @@ const useLocalStorage = (key, defaultValue) => {
 
 const MiningPage = () => {
   const { theme } = useTheme();
-  const { userData, updateUserBalance } = useUser();
+  const { userData, updateUserBalance, getAuthToken, isAuthenticated } = useUser();
   const { addNotification } = useNotifications();
   const { addTransaction } = useTransactions();
 
@@ -271,6 +272,69 @@ const MiningPage = () => {
 
   const userBalance = toNumber(userData?.balance, 0);
 
+  const parseJsonSafely = async (response) => {
+    const text = await response.text();
+    try {
+      return { json: JSON.parse(text), text };
+    } catch {
+      return { json: null, text };
+    }
+  };
+
+  const getCleanToken = useCallback(() => {
+    const token = getAuthToken?.();
+    if (!token) return null;
+    return token.replace(/^["']|["']$/g, "").trim();
+  }, [getAuthToken]);
+
+  const mapBuyBotRecordToCatalogId = useCallback((record) => {
+    const configuredBotId = toNumber(record?.settings?.botId, 0);
+    if (Number.isInteger(configuredBotId) && configuredBotId > 0) {
+      return configuredBotId;
+    }
+
+    const strategyName = `${record?.strategyName || ""}`.trim().toLowerCase();
+    if (!strategyName) return null;
+    const matched = BOT_DATA.find(
+      (bot) => bot.name.toLowerCase() === strategyName
+    );
+    return matched?.id || null;
+  }, []);
+
+  const syncPurchasedBotsFromBackend = useCallback(async () => {
+    const token = getCleanToken();
+    if (!token) {
+      setPurchasedBots(readPurchasedBotIdsFromStorage());
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/BuyBot`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      });
+
+      const { json: result } = await parseJsonSafely(response);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message || "Failed to sync purchased bots.");
+      }
+
+      const rows = Array.isArray(result?.data) ? result.data : [];
+      const activeIds = rows
+        .filter((row) => `${row?.status || ""}`.toLowerCase() === "active")
+        .map((row) => mapBuyBotRecordToCatalogId(row))
+        .filter((value) => Number.isInteger(value) && value > 0);
+
+      setPurchasedBots([...new Set(activeIds)]);
+    } catch (error) {
+      console.error("Mining buy-bot sync failed:", error);
+      setPurchasedBots(readPurchasedBotIdsFromStorage());
+    }
+  }, [getCleanToken, mapBuyBotRecordToCatalogId, setPurchasedBots]);
+
   useEffect(() => {
     const interval = setInterval(() => {
       setTelemetryNow(Date.now());
@@ -292,13 +356,17 @@ const MiningPage = () => {
 
   useEffect(() => {
     const syncPurchasedBots = () => {
+      if (isAuthenticated) {
+        syncPurchasedBotsFromBackend();
+        return;
+      }
       setPurchasedBots(readPurchasedBotIdsFromStorage());
     };
 
     syncPurchasedBots();
     window.addEventListener("focus", syncPurchasedBots);
     return () => window.removeEventListener("focus", syncPurchasedBots);
-  }, [setPurchasedBots]);
+  }, [isAuthenticated, setPurchasedBots, syncPurchasedBotsFromBackend, userData?.userId]);
 
   const purchasedBoostBots = useMemo(
     () => BOT_DATA.filter((bot) => purchasedBots.includes(bot.id)),
@@ -355,24 +423,66 @@ const MiningPage = () => {
     [bots]
   );
 
-  const totalLiveCycleUsd = useMemo(
-    () => bots.reduce((sum, bot) => sum + toNumber(bot.cycleEarningsUsd), 0),
-    [bots]
-  );
+  const miningDisplayMetrics = useMemo(() => {
+    const metrics = {
+      totalCycleUsd: 0,
+      totalPendingUsd: 0,
+      totalSettledUsd: 0,
+      totalCycles: 0,
+      byId: {},
+    };
 
-  const totalSettledUsd = useMemo(
-    () => bots.reduce((sum, bot) => sum + toNumber(bot.totalPaidUsd), 0),
-    [bots]
-  );
+    const now = telemetryNow;
 
-  const totalCyclesCompleted = useMemo(
-    () =>
-      bots.reduce(
-        (sum, bot) => sum + Math.max(0, Math.floor(toNumber(bot.cyclesCompleted))),
-        0
-      ),
-    [bots]
-  );
+    bots.forEach((rawBot) => {
+      const bot = sanitizeMiningBot(rawBot);
+      const config = COIN_CONFIG[bot.crypto];
+      if (!config) return;
+
+      const cycleDurationMs = Math.max(30000, toNumber(bot.cycleDurationMs, MINING_CYCLE_MS));
+      const referenceNow = bot.active ? now : bot.lastTickAt;
+      const cycleElapsedMs = Math.max(0, referenceNow - bot.cycleStartedAt);
+      const cycleProgress = (cycleElapsedMs % cycleDurationMs) / cycleDurationMs;
+      const rateCoinPerSecond =
+        bot.hashRate * toNumber(config.rate, 0) * totalBoostMultiplier;
+      const projectedCycleUsd =
+        rateCoinPerSecond * (cycleDurationMs / 1000) * toNumber(config.price, 0);
+      const inferredCycleUsd = projectedCycleUsd * cycleProgress;
+      const cycleUsdDisplay = Math.max(
+        toNumber(bot.cycleEarningsUsd),
+        inferredCycleUsd
+      );
+
+      const pendingUsd = toNumber(bot.pendingPayoutUsd);
+      const settledUsd = toNumber(bot.totalPaidUsd);
+      const totalMinedUsdDisplay = Math.max(
+        toNumber(bot.totalEarningsUsd),
+        settledUsd + pendingUsd + cycleUsdDisplay
+      );
+      const coinPrice = toNumber(config.price, 0);
+      const inferredCoinTotal = coinPrice > 0 ? totalMinedUsdDisplay / coinPrice : 0;
+      const totalMinedCoinDisplay = Math.max(
+        toNumber(bot.totalEarningsCoin),
+        inferredCoinTotal
+      );
+
+      metrics.totalCycleUsd += cycleUsdDisplay;
+      metrics.totalPendingUsd += pendingUsd;
+      metrics.totalSettledUsd += settledUsd;
+      metrics.totalCycles += Math.max(
+        0,
+        Math.floor(toNumber(bot.cyclesCompleted))
+      );
+      metrics.byId[bot.id] = {
+        cycleUsdDisplay,
+        projectedCycleUsd,
+        totalMinedUsdDisplay,
+        totalMinedCoinDisplay,
+      };
+    });
+
+    return metrics;
+  }, [bots, telemetryNow, totalBoostMultiplier]);
 
   const pendingPayoutRows = useMemo(
     () =>
@@ -465,17 +575,17 @@ const MiningPage = () => {
       ts: telemetryNow,
       hashRateGh: telemetry.totalHashRateGh,
       hourlyYield: projectedUsdPerHour,
-      cycleValue: totalLiveCycleUsd,
-      pendingSettlement: totalPendingPayoutUsd,
+      cycleValue: miningDisplayMetrics.totalCycleUsd,
+      pendingSettlement: miningDisplayMetrics.totalPendingUsd,
       shareRate: telemetry.acceptanceRate,
     };
   }, [
+    miningDisplayMetrics.totalCycleUsd,
+    miningDisplayMetrics.totalPendingUsd,
     telemetryNow,
     telemetry.totalHashRateGh,
     telemetry.acceptanceRate,
     projectedUsdPerHour,
-    totalLiveCycleUsd,
-    totalPendingPayoutUsd,
   ]);
 
   useEffect(() => {
@@ -826,8 +936,8 @@ const MiningPage = () => {
           ts: telemetryNow,
           hashRateGh: telemetry.totalHashRateGh,
           hourlyYield: projectedUsdPerHour,
-          cycleValue: totalLiveCycleUsd,
-          pendingSettlement: totalPendingPayoutUsd,
+          cycleValue: miningDisplayMetrics.totalCycleUsd,
+          pendingSettlement: miningDisplayMetrics.totalPendingUsd,
           shareRate: telemetry.acceptanceRate,
         },
       ];
@@ -859,13 +969,11 @@ const MiningPage = () => {
 
   return (
     <div
-      className={`min-h-screen px-4 py-10 md:px-8 ${
-        theme === "dark"
-          ? "bg-[radial-gradient(circle_at_top,_#0f172a,_#020617_60%)]"
-          : "bg-[radial-gradient(circle_at_top,_#ecfeff,_#f8fafc_60%)]"
+      className={`min-h-screen px-4 py-10 sm:px-6 lg:px-8 ${
+        theme === "dark" ? "bg-zinc-950" : "bg-gray-50"
       }`}
     >
-      <div className="max-w-6xl mx-auto space-y-8">
+      <div className="w-full space-y-8">
         <section className={`${panelClass} rounded-3xl p-6 md:p-8 shadow-2xl`}>
           <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div>
@@ -885,13 +993,6 @@ const MiningPage = () => {
                   {isSettlingPayout ? "Settling payout..." : "Auto settlement on"}
                 </span>
               </div>
-              <h1 className="text-3xl md:text-5xl font-black tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 via-sky-400 to-emerald-400">
-                Mining Control Deck
-              </h1>
-              <p className={`mt-3 max-w-2xl ${subTextClass}`}>
-                Mining is now cycle-based and fully live. Every completed cycle
-                is credited directly to your account balance automatically.
-              </p>
             </div>
 
             <div
@@ -934,7 +1035,7 @@ const MiningPage = () => {
               <FontAwesomeIcon icon={faWallet} className="text-amber-400" />
             </div>
             <div className="text-2xl font-extrabold text-amber-400">
-              {formatCurrency(totalPendingPayoutUsd)}
+              {formatCurrency(miningDisplayMetrics.totalPendingUsd)}
             </div>
             <div className={`text-xs mt-2 ${subTextClass}`}>
               Auto-credited after cycle completion
@@ -947,7 +1048,7 @@ const MiningPage = () => {
               <FontAwesomeIcon icon={faGaugeHigh} className="text-violet-400" />
             </div>
             <div className="text-2xl font-extrabold text-violet-400">
-              {formatCurrency(totalLiveCycleUsd)}
+              {formatCurrency(miningDisplayMetrics.totalCycleUsd)}
             </div>
             <div className={`text-xs mt-2 ${subTextClass}`}>
               In-progress mining rewards
@@ -960,10 +1061,10 @@ const MiningPage = () => {
               <FontAwesomeIcon icon={faCoins} className="text-emerald-400" />
             </div>
             <div className="text-2xl font-extrabold text-emerald-400">
-              {formatCurrency(totalSettledUsd)}
+              {formatCurrency(miningDisplayMetrics.totalSettledUsd)}
             </div>
             <div className={`text-xs mt-2 ${subTextClass}`}>
-              {totalCyclesCompleted} completed cycles
+              {miningDisplayMetrics.totalCycles} completed cycles
             </div>
           </div>
         </section>
@@ -1345,10 +1446,15 @@ const MiningPage = () => {
                 const cycleRemainingMs =
                   cycleDurationMs - (cycleElapsedMs % cycleDurationMs);
                 const uptimeMs = Math.max(0, now - bot.createdAt);
-                const rateCoinPerSecond =
-                  bot.hashRate * (config?.rate || 0) * totalBoostMultiplier;
+                const displayMetrics = miningDisplayMetrics.byId[bot.id] || {};
                 const projectedCycleUsd =
-                  rateCoinPerSecond * (cycleDurationMs / 1000) * (config?.price || 0);
+                  displayMetrics.projectedCycleUsd ?? toNumber(bot.cycleEarningsUsd);
+                const cycleUsdDisplay =
+                  displayMetrics.cycleUsdDisplay ?? toNumber(bot.cycleEarningsUsd);
+                const totalMinedUsdDisplay =
+                  displayMetrics.totalMinedUsdDisplay ?? toNumber(bot.totalEarningsUsd);
+                const totalMinedCoinDisplay =
+                  displayMetrics.totalMinedCoinDisplay ?? toNumber(bot.totalEarningsCoin);
 
                 return (
                   <article
@@ -1445,7 +1551,7 @@ const MiningPage = () => {
                       >
                         <div className={subTextClass}>Cycle (USD)</div>
                         <div className="font-bold text-emerald-500">
-                          {formatCurrency(bot.cycleEarningsUsd)}
+                          {formatCurrency(cycleUsdDisplay)}
                         </div>
                         <div className={`text-xs ${subTextClass}`}>
                           projected {formatCurrency(projectedCycleUsd)}
@@ -1473,10 +1579,10 @@ const MiningPage = () => {
                       >
                         <div className={subTextClass}>Total mined</div>
                         <div className="font-bold text-cyan-400">
-                          {bot.totalEarningsCoin.toFixed(6)} {bot.crypto}
+                          {totalMinedCoinDisplay.toFixed(6)} {bot.crypto}
                         </div>
                         <div className={`text-xs ${subTextClass}`}>
-                          {formatCurrency(bot.totalEarningsUsd)}
+                          {formatCurrency(totalMinedUsdDisplay)}
                         </div>
                       </div>
 

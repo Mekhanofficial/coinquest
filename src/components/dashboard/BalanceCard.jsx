@@ -14,6 +14,7 @@ import { useUser } from "../../context/UserContext";
 import { useTransactions } from "../../context/TransactionContext";
 import { toast } from "react-toastify";
 import PropTypes from "prop-types";
+import { formatCurrencyAmount } from "../../utils/currency";
 
 export default function BalanceCard({
   theme = "light",
@@ -86,12 +87,10 @@ export default function BalanceCard({
     const balance = userData?.balance || 0;
     console.log("💰 Formatting balance:", balance);
     
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency,
+    return formatCurrencyAmount(balance, currency, {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
-    }).format(balance);
+    });
   };
 
   const gradientColors =
@@ -157,26 +156,22 @@ export default function BalanceCard({
         </div>
       </div>
 
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 w-full">
-        <div className="flex items-center gap-4">
-          <h1 className={`text-3xl lg:text-4xl font-bold ${textColor} tracking-tight`}>
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 w-full min-w-0">
+        <div className="flex items-center gap-4 min-w-0">
+          <h1
+            className={`text-3xl lg:text-4xl font-bold ${textColor} tracking-tight break-words min-w-0`}
+          >
             {formatBalance()}
           </h1>
-          {isRefreshing && (
-            <FontAwesomeIcon
-              icon={faSyncAlt}
-              className={`animate-spin ${secondaryTextColor}`}
-            />
-          )}
         </div>
 
         {!hasFunds && (
-          <p className="text-sm text-red-500 font-medium mt-2">
+          <p className="text-sm text-red-500 font-medium mt-2 lg:mt-0 break-words lg:max-w-[260px]">
             You currently have no funds available.
           </p>
         )}
 
-        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-4 w-full">
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-4 w-full lg:w-auto lg:flex-shrink-0">
           <button
             onClick={handleViewTransactions}
             className="group flex items-center gap-2 cursor-pointer w-full sm:w-auto justify-center sm:justify-start"

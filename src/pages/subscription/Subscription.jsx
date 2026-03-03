@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useTheme } from "next-themes";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -9,7 +9,6 @@ import {
   faCoins,
   faRocket,
   faGem,
-  faLock,
 } from "@fortawesome/free-solid-svg-icons";
 import {
   BarChart,
@@ -18,18 +17,33 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
   Cell,
 } from "recharts";
 import { useTransactions } from "../../context/TransactionContext";
 import { useUser } from "../../context/UserContext";
+import { API_BASE_URL } from "../../config/api";
 import { Link } from "react-router-dom";
+
+const PLAN_DURATION_DAYS = {
+  Standard: 1,
+  Premium: 5,
+  Platinum: 3,
+  Elite: 7,
+};
+
+const toPositiveNumber = (value, fallback = 0) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, parsed);
+};
 
 export default function SubscriptionPage() {
   const { theme } = useTheme();
   const [currentPlan, setCurrentPlan] = useState("Basic");
+  const [activeSubscription, setActiveSubscription] = useState(null);
   const [isClient, setIsClient] = useState(false);
+  const [isLoadingSubscription, setIsLoadingSubscription] = useState(false);
   const [investmentAmounts, setInvestmentAmounts] = useState({});
   const [subscribingPlan, setSubscribingPlan] = useState(null);
   const [showManageModal, setShowManageModal] = useState(false);
@@ -39,10 +53,54 @@ export default function SubscriptionPage() {
   const [successMessage, setSuccessMessage] = useState("");
   const [activeBar, setActiveBar] = useState(null);
   const { addTransaction } = useTransactions();
-  const { userData, updateUserBalance, refreshUser } = useUser();
+  const { userData, updateUserBalance, refreshUser, isAuthenticated, getAuthToken } = useUser();
+
+  const parseJsonSafely = async (response) => {
+    const text = await response.text();
+    try {
+      return { json: JSON.parse(text), text };
+    } catch {
+      return { json: null, text };
+    }
+  };
+
+  const getCleanToken = () => {
+    const token = getAuthToken?.();
+    if (!token) return null;
+    return token.replace(/^["']|["']$/g, "").trim();
+  };
+
   const getPersistedPlan = () => {
     if (typeof window === "undefined") return null;
     return localStorage.getItem("currentPlan");
+  };
+
+  const persistPlan = (planName) => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("currentPlan", planName || "Basic");
+  };
+
+  const requestWithAuth = async (path, options = {}) => {
+    const token = getCleanToken();
+    if (!token) {
+      throw new Error("Session expired. Please login again.");
+    }
+
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        ...(options.headers || {}),
+      },
+    });
+
+    const { json: result } = await parseJsonSafely(response);
+    if (!response.ok || !result?.success) {
+      throw new Error(result?.message || `Request failed (${response.status})`);
+    }
+
+    return result;
   };
 
   useEffect(() => {
@@ -62,12 +120,63 @@ export default function SubscriptionPage() {
     }
   }, []);
 
+  const fetchSubscriptions = useCallback(async () => {
+    if (!isAuthenticated) return;
+
+    setIsLoadingSubscription(true);
+    try {
+      const result = await requestWithAuth("/Subscription", { method: "GET" });
+
+      const rows = Array.isArray(result?.data) ? result.data : [];
+      const activeRow =
+        rows.find((row) => row?.status === "Active") || null;
+      const resolvedPlan =
+        result?.currentPlan ||
+        activeRow?.planName ||
+        userData?.subscriptionPlan ||
+        getPersistedPlan() ||
+        "Basic";
+
+      setCurrentPlan(resolvedPlan);
+      setActiveSubscription(activeRow);
+      if (activeRow?.planName && toPositiveNumber(activeRow?.price, 0) > 0) {
+        setInvestmentAmounts((prev) => ({
+          ...prev,
+          [activeRow.planName]: String(toPositiveNumber(activeRow.price, 0)),
+        }));
+      }
+      persistPlan(resolvedPlan);
+    } catch (error) {
+      console.error("Failed to fetch subscriptions:", error);
+      const fallbackPlan =
+        userData?.subscriptionPlan || getPersistedPlan() || "Basic";
+      setCurrentPlan(fallbackPlan);
+      setActiveSubscription(null);
+      persistPlan(fallbackPlan);
+    } finally {
+      setIsLoadingSubscription(false);
+    }
+  }, [isAuthenticated, userData?.subscriptionPlan]);
+
   useEffect(() => {
-    const planFromUser = userData?.subscriptionPlan;
-    const planFromStorage = getPersistedPlan();
-    const resolvedPlan = planFromUser || planFromStorage || "Basic";
-    setCurrentPlan(resolvedPlan);
-  }, [userData?.subscriptionPlan]);
+    if (!isClient) return;
+
+    if (!isAuthenticated) {
+      const fallbackPlan =
+        userData?.subscriptionPlan || getPersistedPlan() || "Basic";
+      setCurrentPlan(fallbackPlan);
+      setActiveSubscription(null);
+      persistPlan(fallbackPlan);
+      return;
+    }
+
+    fetchSubscriptions();
+  }, [
+    fetchSubscriptions,
+    isAuthenticated,
+    isClient,
+    userData?.subscriptionPlan,
+  ]);
 
   const paidPlans = [
     {
@@ -254,13 +363,62 @@ export default function SubscriptionPage() {
     }));
   };
 
+  const cancelActiveSubscriptionRecord = async () => {
+    let subscriptionId =
+      activeSubscription?.id || activeSubscription?._id || "";
+
+    if (!subscriptionId) {
+      const listResult = await requestWithAuth("/Subscription", { method: "GET" });
+      const rows = Array.isArray(listResult?.data) ? listResult.data : [];
+      const activeRow = rows.find((row) => row?.status === "Active");
+      subscriptionId = activeRow?.id || activeRow?._id || "";
+    }
+
+    if (!subscriptionId) return null;
+
+    const result = await requestWithAuth(`/Subscription/${subscriptionId}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        status: "Cancelled",
+        endsAt: new Date().toISOString(),
+      }),
+    });
+
+    return result?.data || null;
+  };
+
+  const createSubscriptionRecord = async (planName, amount) => {
+    const durationDays = PLAN_DURATION_DAYS[planName] || undefined;
+    const payload = {
+      planName,
+      price: toPositiveNumber(amount, 0),
+      status: "Active",
+    };
+
+    if (durationDays) {
+      payload.durationDays = durationDays;
+    }
+
+    const result = await requestWithAuth("/Subscription/Create", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    return result?.data || null;
+  };
+
   const handleSubscribe = async (planName) => {
     const plan = paidPlans.find((p) => p.name === planName) || basicPlan;
-    const investmentAmount = parseFloat(investmentAmounts[planName] || 0);
-    const minAmount = parseFloat(plan.price.replace(/[^0-9.]/g, ""));
+    const investmentAmount = toPositiveNumber(investmentAmounts[planName], 0);
+    const minAmount = toPositiveNumber(plan.price.replace(/[^0-9.]/g, ""), 0);
 
-    // Validate investment amount
-    if (investmentAmount < minAmount) {
+    if (planName !== "Basic" && investmentAmount < minAmount) {
       setSuccessMessage(`Minimum investment for ${planName} is ${plan.price}`);
       setShowSuccessModal(true);
       return;
@@ -270,6 +428,8 @@ export default function SubscriptionPage() {
       setSubscribingPlan(planName);
       try {
         if (currentPlan && currentPlan !== "Basic") {
+          await cancelActiveSubscriptionRecord();
+
           const transactionResult = await addTransaction({
             type: "Subscription",
             amount: 0,
@@ -290,8 +450,10 @@ export default function SubscriptionPage() {
         }
 
         setCurrentPlan("Basic");
-        localStorage.setItem("currentPlan", "Basic");
+        setActiveSubscription(null);
+        persistPlan("Basic");
         await refreshUser();
+        await fetchSubscriptions();
 
         setSuccessMessage("You have switched to the Basic plan.");
         setShowSuccessModal(true);
@@ -305,57 +467,56 @@ export default function SubscriptionPage() {
       return;
     }
 
-    // Check if user has sufficient balance (only for paid plans)
-    if (planName !== "Basic") {
-      if (!userData || userData.balance < investmentAmount) {
-        setShowInsufficientModal(true);
-        return;
-      }
+    if (!userData || userData.balance < investmentAmount) {
+      setShowInsufficientModal(true);
+      return;
     }
 
     setSubscribingPlan(planName);
+    let debitedBalance = false;
     try {
-      // Deduct funds for paid plans
-      if (planName !== "Basic") {
-        const balanceResult = await updateUserBalance(-investmentAmount);
-        if (!balanceResult.success) {
-          setSuccessMessage(
-            balanceResult.error || "Balance update failed. Please try again."
-          );
-          setShowSuccessModal(true);
-          return;
-        }
+      const balanceResult = await updateUserBalance(-investmentAmount);
+      if (!balanceResult.success) {
+        setSuccessMessage(
+          balanceResult.error || "Balance update failed. Please try again."
+        );
+        setShowSuccessModal(true);
+        return;
       }
+      debitedBalance = true;
 
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      const createdSubscription = await createSubscriptionRecord(
+        planName,
+        investmentAmount
+      );
 
-      if (planName !== "Basic") {
-        const transactionResult = await addTransaction({
-          type: "Subscription",
-          amount: investmentAmount,
-          method: planName,
-          details: `Investment: ${formatCurrency(investmentAmount)} | ROI: ${
-            plan.roi
-          }`,
-          status: "Completed",
-          subscriptionDetails: {
-            planName,
-            roi: plan.roi,
-            duration: plan.duration,
-          },
-        });
+      const transactionResult = await addTransaction({
+        type: "Subscription",
+        amount: investmentAmount,
+        method: planName,
+        details: `Investment: ${formatCurrency(investmentAmount)} | ROI: ${
+          plan.roi
+        }`,
+        status: "Completed",
+        subscriptionDetails: {
+          planName,
+          roi: plan.roi,
+          duration: plan.duration,
+        },
+      });
 
-        if (!transactionResult?.success) {
-          console.warn(
-            "Subscription transaction logging failed:",
-            transactionResult?.error
-          );
-        }
+      if (!transactionResult?.success) {
+        console.warn(
+          "Subscription transaction logging failed:",
+          transactionResult?.error
+        );
       }
 
       setCurrentPlan(planName);
-      localStorage.setItem("currentPlan", planName);
+      setActiveSubscription(createdSubscription || null);
+      persistPlan(planName);
       await refreshUser();
+      await fetchSubscriptions();
 
       setSuccessMessage(
         `Successfully subscribed to ${planName} plan with ${formatCurrency(
@@ -365,6 +526,13 @@ export default function SubscriptionPage() {
       setShowSuccessModal(true);
     } catch (error) {
       console.error("Subscription failed:", error);
+      if (debitedBalance) {
+        try {
+          await updateUserBalance(investmentAmount);
+        } catch (refundError) {
+          console.error("Refund after failed subscription sync failed:", refundError);
+        }
+      }
       setSuccessMessage("Subscription failed. Please try again.");
       setShowSuccessModal(true);
     } finally {
@@ -379,7 +547,7 @@ export default function SubscriptionPage() {
   const handleCancelSubscription = async () => {
     setIsCancelling(true);
     try {
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await cancelActiveSubscriptionRecord();
 
       // Record cancellation transaction
       const transactionResult = await addTransaction({
@@ -401,8 +569,10 @@ export default function SubscriptionPage() {
       }
 
       setCurrentPlan("Basic");
-      localStorage.setItem("currentPlan", "Basic");
+      setActiveSubscription(null);
+      persistPlan("Basic");
       await refreshUser();
+      await fetchSubscriptions();
       setSuccessMessage("Your subscription has been cancelled successfully");
       setShowSuccessModal(true);
       setShowManageModal(false);
@@ -413,32 +583,22 @@ export default function SubscriptionPage() {
     }
   };
 
+  const activeSubscriptionPrice = toPositiveNumber(activeSubscription?.price, 0);
+  const activeSubscriptionStatus =
+    activeSubscription?.status || (currentPlan === "Basic" ? "Inactive" : "Active");
+  const nextRenewalLabel = activeSubscription?.endsAt
+    ? new Date(activeSubscription.endsAt).toLocaleDateString()
+    : "N/A";
+
   return (
     <>
       <section
         className={`min-h-screen mx-auto px-4 sm:px-6 lg:px-8 py-10 ${
-          theme === "dark"
-            ? "bg-zinc-950"
-            : "bg-gradient-to-br from-slate-50 to-slate-100"
+          theme === "dark" ? "bg-zinc-950" : "bg-gray-50"
         }`}
       >
-        {/* Hero Section */}
-        <div className="max-w-7xl mx-auto mb-16 text-center">
-          <h1 className="text-4xl md:text-5xl font-bold mb-4 bg-gradient-to-r from-teal-500 to-blue-600 bg-clip-text text-transparent">
-            Investment Plans
-          </h1>
-          <p
-            className={`text-xl max-w-2xl mx-auto ${
-              theme === "dark" ? "text-gray-300" : "text-gray-600"
-            }`}
-          >
-            Choose the perfect plan to maximize your returns with our advanced
-            trading solutions
-          </p>
-        </div>
-
         {isClient && (
-          <div className="max-w-7xl mx-auto mb-16">
+          <div className="w-full mb-10">
             <div
               className={`rounded-xl shadow-xl overflow-hidden ${
                 theme === "dark" ? "bg-slate-900" : "bg-white"
@@ -568,13 +728,14 @@ export default function SubscriptionPage() {
                     {currentPlan !== "Basic" && (
                       <button
                         onClick={handleManageSubscription}
+                        disabled={isLoadingSubscription}
                         className={`w-full py-3 rounded-xl font-medium transition-all ${
                           theme === "dark"
                             ? "bg-slate-700 hover:bg-slate-600 text-white"
                             : "bg-white hover:bg-slate-100 text-slate-800 shadow-md hover:shadow-lg"
-                        }`}
+                        } ${isLoadingSubscription ? "opacity-70 cursor-not-allowed" : ""}`}
                       >
-                        Manage Subscription
+                        {isLoadingSubscription ? "Loading..." : "Manage Subscription"}
                       </button>
                     )}
                   </div>
@@ -699,7 +860,7 @@ export default function SubscriptionPage() {
         )}
 
         {/* Plans Grid */}
-        <div className="max-w-7xl mx-auto">
+        <div className="w-full">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-bold mb-4">
               Choose Your Investment Plan
@@ -879,6 +1040,7 @@ export default function SubscriptionPage() {
                     <button
                       onClick={() => handleSubscribe(plan.name)}
                       disabled={
+                        isLoadingSubscription ||
                         currentPlan === plan.name ||
                         subscribingPlan === plan.name ||
                         (plan.name !== "Basic" &&
@@ -912,7 +1074,7 @@ export default function SubscriptionPage() {
                             theme === "dark" ? "text-teal-400" : "text-teal-600"
                           }`}
                         >
-                          ✓ Your active plan
+                          Active plan selected
                         </span>
                       </div>
                     )}
@@ -980,7 +1142,9 @@ export default function SubscriptionPage() {
                     >
                       Status:
                     </span>
-                    <span className="font-semibold text-green-500">Active</span>
+                    <span className="font-semibold text-green-500">
+                      {activeSubscriptionStatus}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span
@@ -991,7 +1155,9 @@ export default function SubscriptionPage() {
                       Investment:
                     </span>
                     <span className="font-semibold">
-                      ${investmentAmounts[currentPlan]}
+                      {activeSubscriptionPrice > 0
+                        ? formatCurrency(activeSubscriptionPrice)
+                        : "N/A"}
                     </span>
                   </div>
                   <div className="flex justify-between">
@@ -1002,7 +1168,7 @@ export default function SubscriptionPage() {
                     >
                       Next Renewal:
                     </span>
-                    <span className="font-semibold">In 7 days</span>
+                    <span className="font-semibold">{nextRenewalLabel}</span>
                   </div>
                 </div>
               </div>
@@ -1213,3 +1379,4 @@ export default function SubscriptionPage() {
     </>
   );
 }
+

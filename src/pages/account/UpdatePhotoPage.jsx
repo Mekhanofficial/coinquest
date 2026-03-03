@@ -123,7 +123,7 @@ function UpdatePhotoPage() {
   };
 
   return (
-    <div className="min-h-screen pt-10 bg-gradient-to-br from-slate-900 to-slate-800 text-white flex flex-col items-center justify-center p-4">
+    <div className="min-h-screen pt-10 bg-gray-50 dark:bg-zinc-950 text-slate-900 dark:text-white flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-2xl bg-slate-800/50 backdrop-blur-lg rounded-2xl border border-slate-700 shadow-2xl overflow-hidden">
         <div className="bg-gradient-to-r from-teal-600 to-emerald-700 p-6 relative">
           <button

@@ -24,13 +24,11 @@ export default function VerifyAccountPage() {
   return (
     <div
       className={`min-h-screen flex items-center justify-center px-4 py-14 ${
-        isDark
-          ? "bg-gradient-to-br from-slate-900 to-slate-800"
-          : "bg-gradient-to-br from-gray-50 to-gray-100"
+        isDark ? "bg-zinc-950" : "bg-gray-50"
       }`}
     >
       <section
-        className={`w-full max-w-md mx-auto rounded-2xl overflow-hidden shadow-xl transition-all duration-300 ${
+        className={`w-full rounded-2xl overflow-hidden shadow-xl transition-all duration-300 ${
           isDark
             ? "bg-slate-800 text-slate-100 shadow-teal-900/30"
             : "bg-white text-gray-800 shadow-teal-400/20"

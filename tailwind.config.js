@@ -10,6 +10,10 @@ export default {
       xl: "1280px",
     },
     extend: {
+      fontFamily: {
+        sans: ["Plus Jakarta Sans", "ui-sans-serif", "system-ui", "sans-serif"],
+        display: ["Space Grotesk", "Plus Jakarta Sans", "ui-sans-serif", "system-ui", "sans-serif"],
+      },
       keyframes: {
         shake: {
           "0%, 100%": { transform: "translateX(0)" },
@@ -35,6 +39,27 @@ export default {
         "theme-toggle": "pulse 1s ease-in-out 1",
       },
       colors: {
+        cq: {
+          canvas: "#f2f6fb",
+          "canvas-dark": "#070f1f",
+          panel: "#ffffff",
+          "panel-dark": "#101b32",
+          "panel-muted": "#eef4fb",
+          "panel-muted-dark": "#0c162b",
+          border: "#d6e2f1",
+          "border-dark": "#24324c",
+          text: "#0f172a",
+          "text-dark": "#e2e8f0",
+          muted: "#64748b",
+          "muted-dark": "#94a3b8",
+          accent: "#14b8a6",
+          "accent-dark": "#2dd4bf",
+          "accent-soft": "#ccfbf1",
+          buy: "#22c55e",
+          sell: "#ef4444",
+          info: "#3b82f6",
+          warning: "#f59e0b",
+        },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

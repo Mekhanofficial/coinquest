@@ -45,6 +45,11 @@ const STAKE_ASSETS = [
   { name: "Ripple", symbol: "XRP", coingeckoId: "ripple", img: cp9, min: 10, max: 100000, apy: 3.7, color: "bg-black" },
 ];
 
+const COINCAP_ASSET_ID_BY_COINGECKO = {
+  "avalanche-2": "avalanche",
+  ripple: "xrp",
+};
+
 const toNumber = (value, fallback = 0) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -122,11 +127,14 @@ const normalizePosition = (raw, assetMap) => {
 
 export default function StakePage() {
   const { theme } = useTheme();
-  const { userData, updateUserBalance, getAuthToken } = useUser();
+  const { userData, updateUserBalance, getAuthToken, isAuthenticated } = useUser();
   const { addNotification } = useNotifications();
   const { addTransaction } = useTransactions();
 
   const [stakingPositions, setStakingPositions] = useLocalStorage(STAKING_STORAGE_KEY, []);
+  const [isSyncingStakes, setIsSyncingStakes] = useState(false);
+  const [isProcessingStake, setIsProcessingStake] = useState(false);
+  const [stakeSyncError, setStakeSyncError] = useState("");
   const [activeTab, setActiveTab] = useState("pools");
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [stakeAmount, setStakeAmount] = useState("");
@@ -141,6 +149,7 @@ export default function StakePage() {
 
   const settlingPositionsRef = useRef(new Set());
   const normalizedRef = useRef(false);
+  const latestPositionsRef = useRef([]);
   const assetMap = useMemo(
     () => new Map(STAKE_ASSETS.map((asset) => [asset.symbol, asset])),
     []
@@ -153,6 +162,149 @@ export default function StakePage() {
       Array.isArray(prev) ? prev.map((item) => normalizePosition(item, assetMap)) : []
     );
   }, [assetMap, setStakingPositions]);
+
+  useEffect(() => {
+    latestPositionsRef.current = Array.isArray(stakingPositions)
+      ? stakingPositions
+      : [];
+  }, [stakingPositions]);
+
+  const parseJsonSafely = async (response) => {
+    const text = await response.text();
+    try {
+      return { json: JSON.parse(text), text };
+    } catch {
+      return { json: null, text };
+    }
+  };
+
+  const getCleanToken = useCallback(() => {
+    const token = getAuthToken?.();
+    if (!token) return null;
+    return token.replace(/^["']|["']$/g, "").trim();
+  }, [getAuthToken]);
+
+  const toBackendStatus = (status) =>
+    status === "completed" ? "Completed" : status === "cancelled" ? "Cancelled" : "Active";
+
+  const mapBackendStakeToPosition = useCallback(
+    (row) => {
+      const startedAt = row?.startedAt ? Date.parse(row.startedAt) : Date.now();
+      const durationDays = Math.max(1, Math.floor(toNumber(row?.durationDays, 30)));
+      const endAt = row?.endsAt
+        ? Date.parse(row.endsAt)
+        : startedAt + durationDays * 86400000;
+
+      return normalizePosition(
+        {
+          id: String(row?._id || row?.id || `stake-${startedAt}`),
+          ref: row?.reference || row?.ref,
+          asset: row?.asset,
+          coingeckoId: row?.coingeckoId,
+          amountToken: toNumber(row?.amount),
+          principalUsd: toNumber(row?.principalUsd),
+          apy: toNumber(row?.apy),
+          durationDays,
+          startAt: startedAt,
+          endAt,
+          rewardUsdTotal: toNumber(row?.rewardUsdTotal),
+          status: `${row?.status || "Active"}`.toLowerCase(),
+          settledAt: row?.settledAt || null,
+          payoutUsd: toNumber(row?.payoutUsd),
+        },
+        assetMap
+      );
+    },
+    [assetMap]
+  );
+
+  const buildBackendPayloadFromPosition = useCallback(
+    (position) => ({
+      asset: position.asset,
+      coingeckoId: position.coingeckoId,
+      amount: position.amountToken,
+      apy: position.apy,
+      principalUsd: position.principalUsd,
+      durationDays: position.durationDays,
+      rewardUsdTotal: position.rewardUsdTotal,
+      reference: position.ref,
+      startedAt: new Date(position.startAt).toISOString(),
+      endsAt: new Date(position.endAt).toISOString(),
+      settledAt: position.settledAt || null,
+      payoutUsd: toNumber(position.payoutUsd),
+      status: toBackendStatus(position.status),
+    }),
+    []
+  );
+
+  const migrateLocalStakesToBackend = useCallback(
+    async (token, localPositions) => {
+      const migrated = [];
+      for (const position of localPositions) {
+        try {
+          const response = await fetch(`${API_BASE_URL}/Stake/Create`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify(buildBackendPayloadFromPosition(position)),
+          });
+          const { json: result } = await parseJsonSafely(response);
+          if (!response.ok || !result?.success) continue;
+          migrated.push(mapBackendStakeToPosition(result.data));
+        } catch (error) {
+          console.warn("Stake migration skipped:", error);
+        }
+      }
+      return migrated;
+    },
+    [buildBackendPayloadFromPosition, mapBackendStakeToPosition]
+  );
+
+  const syncStakesFromBackend = useCallback(async () => {
+    const token = getCleanToken();
+    if (!token) return;
+
+    setIsSyncingStakes(true);
+    setStakeSyncError("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/Stake`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      });
+      const { json: result } = await parseJsonSafely(response);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message || "Stake sync failed");
+      }
+
+      const rows = Array.isArray(result?.data) ? result.data : [];
+      let normalizedRows = rows.map(mapBackendStakeToPosition);
+
+      if (!normalizedRows.length && latestPositionsRef.current.length) {
+        normalizedRows = await migrateLocalStakesToBackend(
+          token,
+          latestPositionsRef.current
+        );
+      }
+
+      setStakingPositions(normalizedRows);
+    } catch (error) {
+      console.error("Failed to sync stakes:", error);
+      setStakeSyncError("Unable to sync stake records from backend.");
+    } finally {
+      setIsSyncingStakes(false);
+    }
+  }, [
+    getCleanToken,
+    mapBackendStakeToPosition,
+    migrateLocalStakesToBackend,
+    setStakingPositions,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -168,30 +320,90 @@ export default function StakePage() {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    syncStakesFromBackend();
+  }, [isAuthenticated, syncStakesFromBackend, userData?.userId, userData?.uid]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    const handleFocusSync = () => syncStakesFromBackend();
+    window.addEventListener("focus", handleFocusSync);
+    return () => window.removeEventListener("focus", handleFocusSync);
+  }, [isAuthenticated, syncStakesFromBackend]);
+
   const fetchLivePrices = useCallback(async () => {
     const ids = STAKE_ASSETS.map((asset) => asset.coingeckoId).join(",");
     setPricesLoading(true);
     setPriceError("");
     try {
+      const token = getCleanToken();
+      const headers = {
+        Accept: "application/json",
+      };
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
       const response = await fetch(
-        `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`
+        `${API_BASE_URL}/Market/Prices?ids=${encodeURIComponent(ids)}&vs_currencies=usd`,
+        { headers }
       );
-      if (!response.ok) throw new Error(`Price API failed (${response.status})`);
-      const data = await response.json();
+      const { json: result } = await parseJsonSafely(response);
+      if (!response.ok || !result?.success || typeof result?.data !== "object") {
+        throw new Error(
+          result?.message || `Backend price sync failed (${response.status})`
+        );
+      }
 
       const mapped = {};
       STAKE_ASSETS.forEach((asset) => {
-        mapped[asset.symbol] = toNumber(data?.[asset.coingeckoId]?.usd, 0);
+        mapped[asset.symbol] = toNumber(result?.data?.[asset.coingeckoId]?.usd, 0);
       });
+      const hasPrice = Object.values(mapped).some((value) => value > 0);
+      if (!hasPrice) {
+        throw new Error("Backend returned empty market prices");
+      }
       setLivePrices(mapped);
       setPriceSyncAt(Date.now());
-    } catch (error) {
-      setPriceError("Unable to sync live prices.");
-      console.error("Price sync failed:", error);
+    } catch (primaryError) {
+      try {
+        const fallbackIds = STAKE_ASSETS.map(
+          (asset) => COINCAP_ASSET_ID_BY_COINGECKO[asset.coingeckoId] || asset.coingeckoId
+        ).join(",");
+        const fallbackResponse = await fetch(
+          `https://api.coincap.io/v2/assets?ids=${encodeURIComponent(fallbackIds)}`
+        );
+        if (!fallbackResponse.ok) {
+          throw new Error(`CoinCap fallback failed (${fallbackResponse.status})`);
+        }
+        const fallbackData = await fallbackResponse.json();
+        const rows = Array.isArray(fallbackData?.data) ? fallbackData.data : [];
+        const priceById = new Map(
+          rows.map((row) => [String(row?.id || "").toLowerCase(), toNumber(row?.priceUsd, 0)])
+        );
+
+        const mapped = {};
+        STAKE_ASSETS.forEach((asset) => {
+          const coincapId =
+            COINCAP_ASSET_ID_BY_COINGECKO[asset.coingeckoId] || asset.coingeckoId;
+          mapped[asset.symbol] = toNumber(priceById.get(coincapId), 0);
+        });
+        const hasFallbackPrice = Object.values(mapped).some((value) => value > 0);
+        if (!hasFallbackPrice) {
+          throw new Error("CoinCap fallback returned empty market prices");
+        }
+
+        setLivePrices(mapped);
+        setPriceSyncAt(Date.now());
+      } catch (fallbackError) {
+        setPriceError("Unable to sync live prices.");
+        console.error("Price sync failed:", primaryError, fallbackError);
+      }
     } finally {
       setPricesLoading(false);
     }
-  }, []);
+  }, [getCleanToken]);
 
   useEffect(() => {
     fetchLivePrices();
@@ -221,10 +433,40 @@ export default function StakePage() {
       settlingPositionsRef.current.add(position.id);
 
       const payoutUsd = position.principalUsd + position.rewardUsdTotal;
+      const token = getCleanToken();
       try {
         const balanceResult = await updateUserBalance(payoutUsd);
         if (!balanceResult?.success) {
           throw new Error(balanceResult?.error || "Balance settlement failed");
+        }
+
+        let backendSyncError = "";
+        if (token) {
+          try {
+            const response = await fetch(`${API_BASE_URL}/Stake/${position.id}`, {
+              method: "PATCH",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify({
+                status: "Completed",
+                settledAt: new Date().toISOString(),
+                payoutUsd,
+              }),
+            });
+            const { json: result } = await parseJsonSafely(response);
+            if (!response.ok || !result?.success) {
+              backendSyncError =
+                result?.message || "Stake status synced locally but backend update failed.";
+            }
+          } catch (syncError) {
+            backendSyncError =
+              syncError?.message || "Stake status synced locally but backend update failed.";
+          }
+        } else {
+          backendSyncError = "Session unavailable during stake backend update.";
         }
 
         setStakingPositions((prev) =>
@@ -235,8 +477,8 @@ export default function StakePage() {
                   status: "completed",
                   settledAt: new Date().toISOString(),
                   payoutUsd,
-                  retryAt: 0,
-                  lastError: "",
+                  retryAt: backendSyncError ? Date.now() + SETTLE_RETRY_MS : 0,
+                  lastError: backendSyncError,
                 }
               : item
           )
@@ -260,19 +502,23 @@ export default function StakePage() {
           `${position.asset} stake matured. ${formatCurrency(position.rewardUsdTotal)} profit credited.`,
           "success"
         );
-        toast.success(
-          `Stake payout completed: ${formatCurrency(payoutUsd)} credited.`
-        );
+        if (backendSyncError) {
+          toast.warn(backendSyncError);
+        } else {
+          toast.success(
+            `Stake payout completed: ${formatCurrency(payoutUsd)} credited.`
+          );
+        }
       } catch (error) {
         console.error("Stake settlement failed:", error);
         setStakingPositions((prev) =>
           prev.map((item) =>
             item.id === position.id
-              ? {
-                  ...item,
-                  status: "active",
-                  retryAt: Date.now() + SETTLE_RETRY_MS,
-                  lastError: error.message || "Settlement failed",
+                ? {
+                    ...item,
+                    status: "active",
+                    retryAt: Date.now() + SETTLE_RETRY_MS,
+                    lastError: error.message || "Settlement failed",
                 }
               : item
           )
@@ -281,7 +527,13 @@ export default function StakePage() {
         settlingPositionsRef.current.delete(position.id);
       }
     },
-    [addNotification, addTransaction, setStakingPositions, updateUserBalance]
+    [
+      addNotification,
+      addTransaction,
+      getCleanToken,
+      setStakingPositions,
+      updateUserBalance,
+    ]
   );
 
   useEffect(() => {
@@ -339,7 +591,15 @@ export default function StakePage() {
   };
 
   const handleStake = async () => {
+    if (isProcessingStake) return;
     if (!selectedAsset) return;
+
+    const token = getCleanToken();
+    if (!token) {
+      toast.error("Session expired. Please sign in again.");
+      return;
+    }
+
     const amountToken = toNumber(stakeAmount, 0);
     const tokenPrice = toNumber(livePrices[selectedAsset.symbol], 0);
 
@@ -366,79 +626,94 @@ export default function StakePage() {
     const rewardUsdTotal = (principalUsd * selectedAsset.apy * duration) / 36500;
     const startAt = Date.now();
     const endAt = startAt + duration * 86400000;
+    setIsProcessingStake(true);
 
-    const balanceResult = await updateUserBalance(-principalUsd);
-    if (!balanceResult?.success) {
-      toast.error(balanceResult?.error || "Failed to place stake.");
-      return;
-    }
+    let balanceDebited = false;
+    try {
+      const balanceResult = await updateUserBalance(-principalUsd);
+      if (!balanceResult?.success) {
+        throw new Error(balanceResult?.error || "Failed to place stake.");
+      }
+      balanceDebited = true;
 
-    const position = normalizePosition(
-      {
-        id: `stake-${startAt}`,
-        ref: `REF-${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
+      await addTransaction({
+        type: "debit",
+        category: "stake",
+        amount: principalUsd,
+        status: "completed",
+        currency: "USD",
+        description: `Stake opened: ${selectedAsset.symbol}`,
+        metadata: { amountToken, apy: selectedAsset.apy, durationDays: duration },
+      });
+
+      const payload = {
         asset: selectedAsset.symbol,
         coingeckoId: selectedAsset.coingeckoId,
-        amountToken,
+        amount: amountToken,
         principalUsd,
         apy: selectedAsset.apy,
         durationDays: duration,
-        startAt,
-        endAt,
         rewardUsdTotal,
-        status: "active",
-      },
-      assetMap
-    );
+        reference: `REF-${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
+        startedAt: new Date(startAt).toISOString(),
+        endsAt: new Date(endAt).toISOString(),
+        status: "Active",
+      };
 
-    setStakingPositions((prev) => [position, ...prev]);
-
-    await addTransaction({
-      type: "debit",
-      category: "stake",
-      amount: principalUsd,
-      status: "completed",
-      currency: "USD",
-      description: `Stake opened: ${selectedAsset.symbol}`,
-      metadata: { amountToken, apy: selectedAsset.apy, durationDays: duration },
-    });
-
-    const token = getAuthToken?.();
-    if (token) {
-      fetch(`${API_BASE_URL}/Stake/Create`, {
+      const response = await fetch(`${API_BASE_URL}/Stake/Create`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
           Accept: "application/json",
         },
-        body: JSON.stringify({
-          asset: selectedAsset.symbol,
-          amount: amountToken,
-          apy: selectedAsset.apy,
-          status: "Active",
-        }),
-      }).catch((error) => console.warn("Stake backend sync failed:", error));
-    }
+        body: JSON.stringify(payload),
+      });
 
-    addNotification(
-      `Staked ${formatToken(amountToken, selectedAsset.symbol)} for ${duration} days.`,
-      "success"
-    );
-    toast.success("Stake created successfully.");
-    setShowStakeModal(false);
-    setStakeAmount("");
+      const { json: result } = await parseJsonSafely(response);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message || "Stake backend sync failed.");
+      }
+
+      const position = mapBackendStakeToPosition(result.data);
+      setStakingPositions((prev) => [position, ...prev]);
+
+      addNotification(
+        `Staked ${formatToken(amountToken, selectedAsset.symbol)} for ${duration} days.`,
+        "success"
+      );
+      toast.success("Stake created successfully.");
+      setShowStakeModal(false);
+      setStakeAmount("");
+    } catch (error) {
+      console.error("Stake creation failed:", error);
+      if (balanceDebited) {
+        const rollback = await updateUserBalance(principalUsd);
+        if (rollback?.success) {
+          await addTransaction({
+            type: "credit",
+            category: "stake",
+            amount: principalUsd,
+            status: "completed",
+            currency: "USD",
+            description: `Stake rollback: ${selectedAsset.symbol}`,
+            metadata: { reason: "stake-create-failed" },
+          });
+        }
+      }
+      toast.error(error?.message || "Failed to place stake.");
+    } finally {
+      setIsProcessingStake(false);
+    }
   };
 
   return (
     <div
-      className={`min-h-screen px-4 py-10 md:px-8 ${
-        isDarkTheme
-          ? "bg-gradient-to-br from-slate-900 to-teal-950"
-          : "bg-gradient-to-br from-white to-cyan-50"
+      className={`min-h-screen px-4 py-10 sm:px-6 lg:px-8 ${
+        isDarkTheme ? "bg-zinc-950" : "bg-gray-50"
       }`}
     >
-      <div className="max-w-6xl mx-auto space-y-8">
+      <div className="w-full space-y-8">
         <section
           className={`rounded-3xl p-6 ${
             isDarkTheme
@@ -446,15 +721,7 @@ export default function StakePage() {
               : "bg-white border border-slate-200 text-slate-900"
           }`}
         >
-          <h1 className="text-3xl md:text-5xl font-black bg-clip-text text-transparent bg-gradient-to-r from-teal-400 to-cyan-500">
-            Real-Time Staking
-          </h1>
-          <p className={`mt-2 ${isDarkTheme ? "text-slate-300" : "text-slate-600"}`}>
-            Live market pricing, live reward accrual, and automatic maturity payout
-            to your balance.
-          </p>
-
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div
               className={`rounded-2xl p-4 ${
                 isDarkTheme ? "bg-slate-800" : "bg-slate-50"
@@ -508,6 +775,12 @@ export default function StakePage() {
           </div>
           {priceError && (
             <div className="mt-3 text-sm text-rose-400">{priceError}</div>
+          )}
+          {isSyncingStakes && (
+            <div className="mt-2 text-xs text-cyan-400">Syncing stake records...</div>
+          )}
+          {stakeSyncError && (
+            <div className="mt-2 text-xs text-rose-400">{stakeSyncError}</div>
           )}
         </section>
 
@@ -787,14 +1060,16 @@ export default function StakePage() {
 
               <button
                 onClick={handleStake}
-                disabled={!stakeAmount || toNumber(stakeAmount) <= 0}
+                disabled={
+                  isProcessingStake || !stakeAmount || toNumber(stakeAmount) <= 0
+                }
                 className={`w-full py-3 rounded-xl font-bold ${
-                  !stakeAmount || toNumber(stakeAmount) <= 0
+                  isProcessingStake || !stakeAmount || toNumber(stakeAmount) <= 0
                     ? "bg-slate-500/40 text-slate-400 cursor-not-allowed"
                     : "bg-gradient-to-r from-teal-600 to-cyan-700 hover:from-teal-500 hover:to-cyan-600 text-white"
                 }`}
               >
-                Confirm Stake
+                {isProcessingStake ? "Processing..." : "Confirm Stake"}
               </button>
             </div>
           </div>

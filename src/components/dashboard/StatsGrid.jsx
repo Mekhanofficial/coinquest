@@ -3,6 +3,7 @@ import imageCoins from "../../pictures/tradeicon.png";
 import imageWallet from "../../pictures/depositicon.png";
 import CountUp from "react-countup";
 import { motion } from "framer-motion";
+import { formatCurrencyAmount } from "../../utils/currency";
 
 export default function StatsGrid({
   theme,
@@ -12,6 +13,7 @@ export default function StatsGrid({
   liveTrades = 0,
   copiedTrades = 0,
   placeTradeSummary = {},
+  currencyCode = "USD",
 }) {
   const stats = [
     {
@@ -20,7 +22,10 @@ export default function StatsGrid({
       icon: imageChartLine,
       color: "teal",
       format: (value) =>
-        `$${value ? value.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",") : "0"}`,
+        formatCurrencyAmount(value || 0, currencyCode, {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0,
+        }),
     },
     {
       label: "Win Rate",
@@ -126,7 +131,11 @@ export default function StatsGrid({
           )}
           {placeTradeSummary?.avgTradeSize > 0 && (
             <span className="px-3 py-1 rounded-full border border-dashed border-current">
-              Avg ${Math.round(placeTradeSummary.avgTradeSize).toLocaleString()}
+              Avg{" "}
+              {formatCurrencyAmount(placeTradeSummary.avgTradeSize, currencyCode, {
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 0,
+              })}
             </span>
           )}
         </div>

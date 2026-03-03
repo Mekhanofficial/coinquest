@@ -20,47 +20,31 @@ export default function ChartSection({ theme, selectedAsset }) {
     return () => window.removeEventListener("resize", updateSize);
   }, []);
 
-  const chartHeight = isMobile ? 320 : 500;
+  const chartHeight = isMobile ? 420 : 540;
 
   return (
-    <div className="w-full lg:w-[100%]">
-      <div
-        className={`rounded-xl shadow-sm p-4 ${
-          theme === "dark" ? "bg-gray-800" : "bg-white"
-        }`}
-      >
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3">
-          <div className="flex items-center space-x-2">
-            <span
-              className={`text-lg font-semibold ${
-                theme === "dark" ? "text-white" : "text-gray-900"
-              }`}
-            >
+    <div className="w-full">
+      <div className="rounded-2xl border border-cq-border dark:border-cq-border-dark bg-cq-panel dark:bg-cq-panel-dark p-3 sm:p-4 shadow-sm">
+        <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="flex items-center flex-wrap gap-2">
+            <span className="text-lg sm:text-xl font-display font-semibold text-cq-text dark:text-cq-text-dark">
               {selectedAsset || "BTC/USD"}
             </span>
-            <span
-              className={`px-2 py-1 text-xs rounded ${
-                theme === "dark"
-                  ? "bg-green-900 text-green-300"
-                  : "bg-green-100 text-green-800"
-              }`}
-            >
-              +2.4%
+            <span className="rounded-full bg-cq-buy/15 px-2.5 py-1 text-xs font-semibold text-cq-buy">
+              Live Feed
             </span>
           </div>
+
           <div className="flex flex-wrap gap-2">
             {TIMEFRAME_OPTIONS.map((option) => (
               <button
                 key={option.label}
+                type="button"
                 onClick={() => setActiveTimeframe(option)}
-                className={`px-3 py-1 text-sm rounded-lg transition ${
+                className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${
                   activeTimeframe.label === option.label
-                    ? theme === "dark"
-                      ? "bg-blue-600 text-white"
-                      : "bg-blue-500 text-white"
-                    : theme === "dark"
-                    ? "bg-gray-700 text-gray-200 hover:bg-gray-600"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    ? "bg-cq-info text-white shadow-sm"
+                    : "bg-cq-panel-muted dark:bg-cq-panel-muted-dark text-cq-muted dark:text-cq-muted-dark hover:text-cq-text dark:hover:text-cq-text-dark"
                 }`}
               >
                 {option.label}
@@ -68,12 +52,16 @@ export default function ChartSection({ theme, selectedAsset }) {
             ))}
           </div>
         </div>
-        <TradingViewChart
-          symbol={selectedAsset || "BTC/USD"}
-          interval={activeTimeframe.interval}
-          width="100%"
-          height={chartHeight}
-        />
+
+        <div className="w-full overflow-hidden rounded-xl">
+          <TradingViewChart
+            symbol={selectedAsset || "BTC/USD"}
+            interval={activeTimeframe.interval}
+            width="100%"
+            height={chartHeight}
+            theme={theme}
+          />
+        </div>
       </div>
     </div>
   );

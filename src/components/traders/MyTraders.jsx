@@ -1,207 +1,106 @@
-import { useState, useEffect } from "react";
-import traderImages from "./MyTradersImg";
+import { useMemo, useState } from "react";
 import { useTheme } from "next-themes";
+import { toast } from "react-toastify";
 import { TraderCard } from "./TraderCard";
 import { useCopyTraders } from "../../context/CopyTraderContext";
 import { useUser } from "../../context/UserContext";
-import { toast } from "react-toastify";
-
-const NAMES = [
-  "Lisa Dawson",
-  "John Cerasani",
-  "Defend Dark",
-  "Tori Trades",
-  "GirlGone_Crypto",
-  "Molly Elmore",
-  "Dontrece_HD〽️",
-  "Taylor Hamilton",
-  "Laurent Jones",
-  "Kevin Kruze",
-  "Angelo",
-  "Crypto Tea",
-  "Clarity Crypto",
-  "Mrturnupthehustle",
-  "TwentyEight",
-  "Loudmouth.eth",
-  "TJR",
-  "Renzo",
-  "Randi Hipper",
-  "Cryptologicjohn",
-  "Micheal Rodriguez",
-  "Tradetravelchill",
-  "Penny2x",
-  "Micheal S Gibson",
-  "Jpdandrea",
-  "Crypto Rover",
-  "Luke Belmar",
-  "BAM INVESTOR",
-  "Chris Buziness",
-  "Coach Vince",
-  "Milly",
-  "Laurent Boutiller",
-  "Dom Lucre",
-  "Mason Versluis",
-  "Greg",
-  "Cole Jafari",
-  "Evca Wolf",
-  "Jenny",
-  "SlumDoge",
-  "Layah Woods",
-  "Eva Savagiou",
-  "CrypNuevo",
-  "Zach Humphries",
-  "Justin Wallers",
-  "Oscar Ramos",
-  "Brian Jung",
-  "Calvin Williams",
-  "Ixnkong",
-  "Tiffany",
-  "Tarabull808",
-  "Tyler",
-  "Stephan Borg",
-  "Mona",
-  "Blonde Broker",
-  "Tommy Bryson",
-  "JA",
-  "Josh Lenny Lewis",
-  "Lainylainylainy",
-  "Chris Buziness",
-  "Layah Heilpern",
-  "Arno Wingen",
-  "Kadin Thompson",
-  "Tiago Andrade",
-  "Hamza Hamed",
-  "Rico",
-  "Roc Zacharias",
-  "Rey",
-  "STXRBOY999",
-  "NinjaScalp",
-  "Thomas Kralow",
-  "Alex Gonzalez",
-  "Bob Smith",
-  "Charlie Davis",
-  "Diana Evans",
-  "Ethan Wilson",
-  "Fiona Carter",
-  "George Adams",
-  "Hannah Scott",
-  "Ian Thompson",
-  "Julia Baker",
-  "Alice Johnson",
-  "Bob Smith",
-  "Charlie Davis",
-  "Diana Evans",
-  "Ethan Wilson",
-  "Fiona Carter",
-  "George Adams",
-  "Hannah Scott",
-  "Ian Thompson",
-  "Julia Baker",
-];
-
-// Utility function to generate traders data
-const generateTraders = () => {
-  return Array.from({ length: 100 }, (_, i) => {
-    const copyPrice = Number((Math.random() * 950 + 50).toFixed(2));
-    const performance =
-      copyPrice >= 1000 ? 20 : copyPrice >= 500 ? 15 : copyPrice >= 250 ? 11 : 8;
-
-    return {
-      id: i + 1,
-      name: NAMES[i % NAMES.length],
-      winRate: Math.floor(Math.random() * 31) + 70,
-      profitShare: Math.floor(Math.random() * 21) + 10,
-      performance,
-      balance: Number((Math.random() * 500 + 200).toFixed(2)),
-      copyPrice,
-      losses: Math.floor(Math.random() * 10),
-      wins: Math.floor(Math.random() * 50) + 1,
-      image: traderImages[i % traderImages.length],
-    };
-  });
-};
+import { COPY_TRADERS_SEED } from "../../data/copyTradersSeed";
 
 export default function MyTraderPage() {
   const { theme } = useTheme();
   const [search, setSearch] = useState("");
   const [loadingId, setLoadingId] = useState(null);
   const { copiedTraders, addCopiedTrader } = useCopyTraders();
-  const [traders, setTraders] = useState([]);
   const { userData } = useUser();
 
-  useEffect(() => {
-    setTraders(generateTraders());
-  }, []);
+  const traders = COPY_TRADERS_SEED;
+  const userBalance = Number(userData?.balance) || 0;
 
-  const filteredTraders = traders.filter((trader) =>
-    trader.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredTraders = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return traders;
 
-  const handleCopy = (id) => {
-    if (userData?.balance == null || userData.balance <= 0) {
-      toast.error(
-        "Insufficient balance. Please deposit funds to copy traders."
-      );
+    return traders.filter(
+      (trader) =>
+        trader.name.toLowerCase().includes(term) ||
+        trader.strategy.toLowerCase().includes(term)
+    );
+  }, [search, traders]);
+
+  const handleCopy = async (id) => {
+    if (userBalance <= 0) {
+      toast.error("Insufficient balance. Deposit funds to copy traders.");
       return;
     }
 
-    if (copiedTraders.some((t) => t.id === id)) {
-      toast.error("You're already copying this trader");
+    if (copiedTraders.some((trader) => trader.id === id)) {
+      toast.error("You are already copying this trader.");
+      return;
+    }
+
+    const traderToCopy = traders.find((trader) => trader.id === id);
+    if (!traderToCopy) {
+      toast.error("Trader profile not found.");
       return;
     }
 
     setLoadingId(id);
-    const traderToCopy = traders.find((t) => t.id === id);
     const investmentAmount =
-      parseFloat(traderToCopy.copyPrice) ||
-      parseFloat(traderToCopy.balance) ||
-      100;
+      Number(traderToCopy.copyPrice) || Number(traderToCopy.balance) || 100;
 
-    setTimeout(async () => {
-      try {
-        await addCopiedTrader(traderToCopy, investmentAmount);
-        toast.success(`Successfully started copying ${traderToCopy.name}`);
-      } catch (error) {
-        toast.error(error?.message || "Failed to copy trader.");
-      } finally {
-        setLoadingId(null);
-      }
-    }, 2000);
+    try {
+      await addCopiedTrader(traderToCopy, investmentAmount);
+      toast.success(`Now copying ${traderToCopy.name}.`);
+    } catch (error) {
+      toast.error(error?.message || "Failed to copy trader.");
+    } finally {
+      setLoadingId(null);
+    }
   };
 
   return (
-    <div
-      className={`px-4 py-14 min-h-screen ${
-        theme === "dark"
-          ? "bg-gradient-to-r from-gray-800 to-black text-white"
-          : "bg-gradient-to-r from-gray-100 to-gray-300 text-gray-800"
+    <section
+      className={`min-h-screen px-4 py-10 sm:px-6 lg:px-8 ${
+        theme === "dark" ? "bg-zinc-950 text-white" : "bg-gray-50 text-gray-800"
       }`}
     >
-      <input
-        type="text"
-        placeholder="Search traders..."
-        className={`w-full p-3 mb-6 rounded-lg focus:ring-2 focus:outline-none ${
-          theme === "dark"
-            ? "bg-gray-700 text-white border-gray-600 focus:ring-teal-300"
-            : "bg-white text-gray-800 border-gray-300 focus:ring-teal-500"
-        } border`}
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-      />
-
-      {(userData?.balance == null || userData.balance <= 0) && (
-        <div
-          className={`mb-6 p-4 rounded-lg ${
+      <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <input
+          type="text"
+          placeholder="Search traders..."
+          className={`w-full rounded-xl border px-4 py-3 focus:outline-none focus:ring-2 ${
             theme === "dark"
-              ? "bg-red-900/50 text-red-200"
-              : "bg-red-100 text-red-800"
+              ? "border-slate-700 bg-slate-900 text-white focus:ring-teal-500/50"
+              : "border-slate-300 bg-white text-slate-800 focus:ring-teal-500/40"
+          }`}
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+
+        <div
+          className={`rounded-xl border px-4 py-2 text-sm font-semibold ${
+            theme === "dark"
+              ? "border-slate-700 bg-slate-900 text-slate-200"
+              : "border-slate-200 bg-white text-slate-700"
           }`}
         >
-          <p>You need to deposit funds to start copying traders.</p>
+          {filteredTraders.length} traders
+        </div>
+      </div>
+
+      {userBalance <= 0 && (
+        <div
+          className={`mb-6 rounded-xl border p-4 text-sm ${
+            theme === "dark"
+              ? "border-rose-800 bg-rose-900/30 text-rose-200"
+              : "border-rose-200 bg-rose-50 text-rose-700"
+          }`}
+        >
+          You need to deposit funds to start copying traders.
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {filteredTraders.map((trader) => (
           <TraderCard
             key={trader.id}
@@ -209,12 +108,12 @@ export default function MyTraderPage() {
             theme={theme}
             onCopy={handleCopy}
             isCopying={loadingId === trader.id}
-            isCopied={copiedTraders.some((t) => t.id === trader.id)}
-            hasSufficientFunds={userData?.balance > 0}
-            userBalance={userData?.balance || 0}
+            isCopied={copiedTraders.some((entry) => entry.id === trader.id)}
+            userBalance={userBalance}
           />
         ))}
       </div>
-    </div>
+    </section>
   );
 }
+

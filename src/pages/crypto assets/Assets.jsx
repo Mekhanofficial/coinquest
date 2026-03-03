@@ -3,28 +3,54 @@ import { useTheme } from "next-themes";
 import { useParams } from "react-router-dom";
 import axios from "axios";
 
-const COIN_STATS_NEWS_URL =
-  "https://api.coinstats.app/public/v1/news?skip=0&limit=6";
+const CRYPTO_COMPARE_NEWS_URL =
+  "https://min-api.cryptocompare.com/data/v2/news/?lang=EN";
 const REDDIT_NEWS_URL =
-  "https://www.reddit.com/r/CryptoCurrency/hot.json?limit=6";
-const NEWS_PLACEHOLDER =
-  "https://via.placeholder.com/160x90.png?text=Crypto+News";
+  "https://www.reddit.com/r/CryptoCurrency/hot.json?limit=10";
+const REDDIT_BITCOIN_NEWS_URL =
+  "https://www.reddit.com/r/Bitcoin/hot.json?limit=10";
+const NEWS_PLACEHOLDER_SVG = `<svg xmlns='http://www.w3.org/2000/svg' width='320' height='180' viewBox='0 0 320 180'><defs><linearGradient id='bg' x1='0' y1='0' x2='1' y2='1'><stop offset='0%' stop-color='%230f172a'/><stop offset='100%' stop-color='%23134e4a'/></linearGradient></defs><rect width='320' height='180' fill='url(%23bg)'/><circle cx='72' cy='58' r='18' fill='%2322d3ee' opacity='0.75'/><rect x='38' y='92' width='244' height='14' rx='7' fill='%23cbd5e1' opacity='0.85'/><rect x='38' y='114' width='188' height='12' rx='6' fill='%2394a3b8' opacity='0.8'/><text x='38' y='44' fill='%23ffffff' font-family='Arial, sans-serif' font-size='18' font-weight='700'>LIVE CRYPTO NEWS</text></svg>`;
+const NEWS_PLACEHOLDER = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
+  NEWS_PLACEHOLDER_SVG
+)}`;
 
-const normalizeCoinStatsNews = (payload) => {
-  const articles = Array.isArray(payload?.news) ? payload.news : [];
+const isValidHttpUrl = (value = "") => /^https?:\/\//i.test(value);
+
+const decodeHtml = (value = "") =>
+  String(value).replace(/&amp;/g, "&").replace(/&#x2F;/g, "/");
+
+const stripHtml = (value = "") =>
+  String(value)
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const formatPublishedAt = (value) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return new Date().toLocaleString();
+  }
+  return date.toLocaleString();
+};
+
+const normalizeCryptoCompareNews = (payload) => {
+  const articles = Array.isArray(payload?.Data) ? payload.Data : [];
+
   return articles
-    .filter((article) => article?.title && (article.link || article.url))
-    .slice(0, 4)
+    .filter((article) => article?.title && article?.url)
+    .slice(0, 5)
     .map((article) => ({
       title: article.title,
       description:
-        article.description ||
-        article.content?.slice(0, 120) ||
-        "Stay informed with the latest crypto headlines.",
-      url: article.link || article.url,
-      urlToImage: article.imageUrl || article.thumbnail || NEWS_PLACEHOLDER,
-      publishedAt: article.date
-        ? new Date(article.date).toLocaleString()
+        stripHtml(article.body).slice(0, 140) ||
+        `Latest update from ${article?.source_info?.name || "crypto markets"}.`,
+      source: article?.source_info?.name || article.source || "Crypto News",
+      url: article.url,
+      urlToImage: isValidHttpUrl(article.imageurl)
+        ? article.imageurl
+        : NEWS_PLACEHOLDER,
+      publishedAt: article.published_on
+        ? formatPublishedAt(Number(article.published_on) * 1000)
         : new Date().toLocaleString(),
     }));
 };
@@ -33,24 +59,75 @@ const normalizeRedditNews = (payload) => {
   const posts = Array.isArray(payload?.data?.children)
     ? payload.data.children
     : [];
+
   return posts
     .map((child) => child?.data)
     .filter((post) => post?.title && post?.permalink)
-    .slice(0, 4)
-    .map((post) => ({
-      title: post.title,
-      description: post.selftext
-        ? `${post.selftext.trim().slice(0, 140)}...`
-        : `r/${post.subreddit} • ${post.author}`,
-      url: `https://www.reddit.com${post.permalink}`,
-      urlToImage:
-        post.thumbnail && post.thumbnail.startsWith("http")
+    .slice(0, 5)
+    .map((post) => {
+      const previewImage = post?.preview?.images?.[0]?.source?.url;
+      const imageFromPreview = decodeHtml(previewImage);
+      const imageUrl = isValidHttpUrl(imageFromPreview)
+        ? imageFromPreview
+        : isValidHttpUrl(post.thumbnail)
           ? post.thumbnail
-          : NEWS_PLACEHOLDER,
-      publishedAt: post.created_utc
-        ? new Date(post.created_utc * 1000).toLocaleString()
-        : new Date().toLocaleString(),
-    }));
+          : NEWS_PLACEHOLDER;
+      const summary = stripHtml(post.selftext).slice(0, 140);
+
+      return {
+        title: post.title,
+        description:
+          summary || `r/${post.subreddit} - posted by ${post.author || "user"}`,
+        source: `r/${post.subreddit || "CryptoCurrency"}`,
+        url: isValidHttpUrl(post.url)
+          ? post.url
+          : `https://www.reddit.com${post.permalink}`,
+        urlToImage: imageUrl,
+        publishedAt: post.created_utc
+          ? formatPublishedAt(Number(post.created_utc) * 1000)
+          : new Date().toLocaleString(),
+      };
+    });
+};
+
+const NEWS_SOURCES = [
+  {
+    label: "CryptoCompare",
+    url: CRYPTO_COMPARE_NEWS_URL,
+    normalize: normalizeCryptoCompareNews,
+  },
+  {
+    label: "Reddit CryptoCurrency",
+    url: REDDIT_NEWS_URL,
+    normalize: normalizeRedditNews,
+  },
+  {
+    label: "Reddit Bitcoin",
+    url: REDDIT_BITCOIN_NEWS_URL,
+    normalize: normalizeRedditNews,
+  },
+];
+
+const fetchNormalizedNews = async () => {
+  let lastError = null;
+
+  for (const source of NEWS_SOURCES) {
+    try {
+      const { data } = await axios.get(source.url, { timeout: 12000 });
+      const normalizedNews = source.normalize(data);
+
+      if (normalizedNews.length > 0) {
+        return normalizedNews;
+      }
+
+      lastError = new Error(`${source.label} returned no news`);
+    } catch (error) {
+      console.warn(`${source.label} news source failed`, error);
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("Unable to load any news source");
 };
 
 // Helper: Volume formatting
@@ -68,19 +145,19 @@ const CryptoCard = ({ crypto }) => {
 
   return (
     <div
-      className={`bg-gradient-to-r rounded-lg p-6 shadow-md hover:shadow-lg transition-all duration-300 border hover:border-teal-500 hover:shadow-teal-500/50 hover:scale-[1.02] flex items-center ${
+      className={`min-w-0 bg-gradient-to-r rounded-lg p-6 shadow-md hover:shadow-lg transition-all duration-300 border hover:border-teal-500 hover:shadow-teal-500/50 hover:scale-[1.02] flex items-center ${
         theme === "dark"
           ? "from-slate-900 to-slate-800 border-slate-600"
           : "from-slate-100 to-slate-200 border-gray-300"
       }`}
     >
       <img src={crypto.image} alt={crypto.name} className="w-10 h-10 mr-4" />
-      <div className="flex-1">
-        <div className="flex justify-between items-center">
+      <div className="flex-1 min-w-0">
+        <div className="flex min-w-0 justify-between items-center gap-2">
           <span
             className={`text-sm font-medium ${
               theme === "dark" ? "text-gray-300" : "text-gray-700"
-            }`}
+            } truncate`}
           >
             {crypto.name}
           </span>
@@ -92,18 +169,18 @@ const CryptoCard = ({ crypto }) => {
             {crypto.change}
           </span>
         </div>
-        <div className="flex justify-between items-center mt-2">
+        <div className="flex min-w-0 justify-between items-center mt-2 gap-2">
           <h2
             className={`text-lg font-bold ${
               theme === "dark" ? "text-white" : "text-gray-900"
-            }`}
+            } truncate`}
           >
             {crypto.price}
           </h2>
           <span
             className={`text-sm ${
               theme === "dark" ? "text-gray-400" : "text-gray-500"
-            }`}
+            } truncate`}
           >
             Vol: {crypto.volume}
           </span>
@@ -117,28 +194,29 @@ const CryptoCard = ({ crypto }) => {
 const NewsCard = ({ article }) => {
   const { theme } = useTheme();
 
-  const imageUrl =
-    article.urlToImage && article.urlToImage.startsWith("http")
-      ? article.urlToImage
-      : NEWS_PLACEHOLDER;
+  const imageUrl = isValidHttpUrl(article.urlToImage)
+    ? article.urlToImage
+    : NEWS_PLACEHOLDER;
 
   return (
     <a
       href={article.url}
       target="_blank"
       rel="noopener noreferrer"
-      className="block hover:opacity-80 transition-opacity"
+      className="block min-w-0 hover:opacity-80 transition-opacity"
     >
-      <div className="flex items-start space-x-4">
+      <div className="flex min-w-0 items-start space-x-4">
         <img
           src={imageUrl}
           alt={article.title}
+          loading="lazy"
           onError={(event) => {
+            event.currentTarget.onerror = null;
             event.currentTarget.src = NEWS_PLACEHOLDER;
           }}
           className="w-32 h-32 object-cover rounded-md"
         />
-        <div>
+        <div className="min-w-0">
           <h3
             className={`font-semibold text-sm mb-2 line-clamp-2 ${
               theme === "dark" ? "text-white" : "text-gray-900"
@@ -152,6 +230,13 @@ const NewsCard = ({ article }) => {
             }`}
           >
             {article.description}
+          </p>
+          <p
+            className={`text-[10px] font-semibold mt-1 uppercase tracking-wide ${
+              theme === "dark" ? "text-slate-300" : "text-slate-500"
+            }`}
+          >
+            {article.source || "Live Feed"}
           </p>
           <p
             className={`text-[10px] font-semibold mt-1 uppercase tracking-wide ${
@@ -219,38 +304,17 @@ export default function AssetPage() {
       setError((prev) => ({ ...prev, news: null }));
 
       try {
-        const { data } = await axios.get(COIN_STATS_NEWS_URL);
-        const coinStatsNews = normalizeCoinStatsNews(data);
-
-        if (coinStatsNews.length) {
-          setNews(coinStatsNews);
-          return;
-        }
-
-        throw new Error("CoinStats returned no news");
-      } catch (primaryError) {
-        console.warn("Primary news source failed:", primaryError);
-
-        try {
-          const fallbackResponse = await axios.get(REDDIT_NEWS_URL);
-          const redditNews = normalizeRedditNews(fallbackResponse.data);
-
-          if (redditNews.length) {
-            setNews(redditNews);
-            return;
-          }
-
-          throw new Error("Reddit returned no news");
-        } catch (fallbackError) {
-          console.error("Fallback news source failed:", fallbackError);
-          setError((prev) => ({
-            ...prev,
-            news:
-              fallbackError?.message ||
-              "Unable to load live news right now, please try again later.",
-          }));
-          setNews([]);
-        }
+        const normalizedNews = await fetchNormalizedNews();
+        setNews(normalizedNews);
+      } catch (newsError) {
+        console.error("All live news sources failed:", newsError);
+        setError((prev) => ({
+          ...prev,
+          news:
+            newsError?.message ||
+            "Unable to load live news right now, please try again later.",
+        }));
+        setNews([]);
       } finally {
         setLoading((prev) => ({ ...prev, news: false }));
       }
@@ -261,13 +325,13 @@ export default function AssetPage() {
 
   return (
     <section
-      className={`min-h-screen w-full px-4 py-14 lg:px-10  ${
-        theme === "dark" ? "bg-gray-900" : "bg-slate-50"
+      className={`min-h-screen min-w-0 w-full overflow-x-hidden px-4 py-10 sm:px-6 lg:px-8 ${
+        theme === "dark" ? "bg-zinc-950" : "bg-gray-50"
       }`}
     >
-      <div className="flex flex-col lg:flex-row gap-6">
+      <div className="flex min-w-0 flex-col gap-6 xl:flex-row xl:items-stretch">
         {/* Crypto Section */}
-        <div className="w-full lg:w-2/3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+        <div className="min-w-0 w-full xl:w-2/3 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {loading.crypto ? (
             Array.from({ length: 6 }).map((_, index) => (
               <div
@@ -290,7 +354,7 @@ export default function AssetPage() {
 
         {/* News Section */}
         <div
-          className={`w-full lg:w-1/3 p-6 rounded-lg shadow-md border ${
+          className={`min-w-0 w-full xl:w-1/3 p-6 rounded-lg shadow-md border xl:h-auto flex flex-col ${
             theme === "dark"
               ? "bg-slate-800 border-slate-600"
               : "bg-white border-gray-300"
@@ -303,7 +367,7 @@ export default function AssetPage() {
           >
             LIVE NEWS
           </h2>
-          <div className="space-y-6">
+          <div className="space-y-6 flex-1">
             {loading.news ? (
               Array.from({ length: 2 }).map((_, index) => (
                 <div
@@ -349,7 +413,7 @@ export default function AssetPage() {
             )}
 
             <a
-              href="https://www.example.com/crypto-news"
+              href="https://www.cryptocompare.com/news/"
               target="_blank"
               rel="noopener noreferrer"
               className={`mt-6 block w-full text-center font-semibold py-2 px-4 rounded-lg transition-colors ${

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useTheme } from "next-themes";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -13,6 +13,7 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 import { API_BASE_URL } from "../../config/api";
 import { useUser } from "../../context/UserContext";
+import PaginationControls from "../ui/PaginationControls";
 
 export default function PaymentProofPage() {
   const { theme } = useTheme();
@@ -26,6 +27,8 @@ export default function PaymentProofPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const fileInputRef = useRef(null);
 
   const MAX_FILE_SIZE = 5 * 1024 * 1024;
@@ -73,6 +76,23 @@ export default function PaymentProofPage() {
   useEffect(() => {
     fetchPaymentProofs();
   }, []);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [pageSize, paymentProofs.length]);
+
+  const totalPages = Math.max(1, Math.ceil(paymentProofs.length / pageSize));
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const paginatedProofs = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return paymentProofs.slice(start, start + pageSize);
+  }, [paymentProofs, currentPage, pageSize]);
 
   const validateFile = (file) => {
     if (!file) return "Please select a file to upload.";
@@ -196,33 +216,11 @@ export default function PaymentProofPage() {
 
   return (
     <div
-      className={`min-h-screen py-10 px-4 md:px-6 lg:px-8 ${
-        theme === "dark"
-          ? "bg-gradient-to-br from-slate-900 to-gray-900 text-gray-200"
-          : "bg-gradient-to-br from-slate-100 to-gray-100 text-gray-800"
+      className={`min-h-screen px-4 py-10 sm:px-6 lg:px-8 ${
+        theme === "dark" ? "bg-zinc-950 text-gray-200" : "bg-gray-50 text-gray-800"
       }`}
     >
-      <div className="max-w-4xl mx-auto">
-        <div className="text-center mb-8 md:mb-12">
-          <h1
-            className={`text-3xl md:text-4xl font-bold mb-3 ${
-              theme === "dark"
-                ? "text-transparent bg-clip-text bg-gradient-to-r from-teal-400 to-teal-600"
-                : "text-transparent bg-clip-text bg-gradient-to-r from-teal-500 to-teal-700"
-            }`}
-          >
-            Payment Verification
-          </h1>
-          <p
-            className={`max-w-lg mx-auto text-sm md:text-base ${
-              theme === "dark" ? "text-gray-400" : "text-gray-600"
-            }`}
-          >
-            Upload proof of your payment transactions for verification and
-            tracking
-          </p>
-        </div>
-
+      <div className="w-full">
         {/* Upload Card */}
         <div
           className={`rounded-2xl shadow-xl p-5 md:p-6 mb-10 md:mb-12 ${
@@ -561,7 +559,7 @@ export default function PaymentProofPage() {
                     </td>
                   </tr>
                 ) : paymentProofs.length > 0 ? (
-                  paymentProofs.map((proof, index) => (
+                  paginatedProofs.map((proof, index) => (
                     <tr
                       key={proof.id}
                       className={`${
@@ -670,6 +668,19 @@ export default function PaymentProofPage() {
           </div>
 
           {paymentProofs.length > 0 && (
+            <PaginationControls
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalItems={paymentProofs.length}
+              pageSize={pageSize}
+              onPageChange={setCurrentPage}
+              onPageSizeChange={setPageSize}
+              pageSizeOptions={[10, 20, 50]}
+              itemLabel="payment proofs"
+            />
+          )}
+
+          {paymentProofs.length > 0 && (
             <div
               className={`mt-4 p-3 rounded-xl text-center text-xs md:text-sm ${
                 theme === "dark"
@@ -683,7 +694,7 @@ export default function PaymentProofPage() {
                 }`}
               >
                 <FontAwesomeIcon icon={faClock} className="mr-2" />
-                Showing {paymentProofs.length} most recent transactions
+                Showing {paginatedProofs.length} of {paymentProofs.length} payment proofs
               </p>
             </div>
           )}

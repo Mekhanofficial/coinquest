@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useTheme } from "next-themes";
 import { useLocation, Link, useNavigate } from "react-router-dom";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
@@ -6,7 +6,6 @@ import {
   faBars,
   faBell,
   faChartLine,
-  faHome,
   faLightbulb,
   faMoon,
   faSignOutAlt,
@@ -18,6 +17,27 @@ import {
 import { useUser } from "../../../context/UserContext";
 import { useNotifications } from "../../../context/NotificationContext";
 import PropTypes from "prop-types";
+import { API_BASE_URL } from "../../../config/api";
+import { formatCurrencyAmount } from "../../../utils/currency";
+import {
+  getDashboardPageMeta,
+  normalizeDashboardPath,
+} from "../../../constants/dashboardPageMeta";
+
+const toNumber = (value, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const getPulseStats = (payload = {}) => {
+  const revenue = payload?.revenue || {};
+  return {
+    grossRevenue: toNumber(revenue.grossRevenue, 0),
+    activeTrades: toNumber(revenue.activeTrades, 0),
+    winRate: toNumber(revenue.winRate, 0),
+    roiPercent: toNumber(revenue.roiPercent, 0),
+  };
+};
 
 const NotificationPanel = () => {
   const {
@@ -155,12 +175,13 @@ const HeaderPage = ({ isSidebarOpen, setIsSidebarOpen }) => {
   const { theme, setTheme } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
-  const { userData, logoutUser, isLoading, isAuthenticated } = useUser();
+  const { userData, logoutUser, isLoading, isAuthenticated, getAuthToken } =
+    useUser();
 
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [menuPulse, setMenuPulse] = useState(() => getPulseStats(userData));
   const userMenuRef = useRef(null);
   const userMenuLinks = [
-    { label: "Dashboard", to: "/Dashboard", icon: faHome },
     { label: "Account", to: "/Account", icon: faUser },
     { label: "Watchlist", to: "/Watchlist", icon: faChartLine },
     { label: "Messages", to: "/Messages", icon: faEnvelope },
@@ -168,22 +189,8 @@ const HeaderPage = ({ isSidebarOpen, setIsSidebarOpen }) => {
     { label: "Help Center", to: "/Help", icon: faLightbulb },
   ];
 
-  const pageTitles = {
-    "/Dashboard": "Dashboard",
-    "/Markets": "Markets",
-    "/Mining": "Mining",
-    "/Deposits": "Deposits",
-    "/Account": "Account",
-    "/Referrals": "Referrals",
-    "/Withdrawals": "Withdrawals",
-    "/transactions": "Transactions",
-    "/Subscription": "Subscription",
-    "/VerifyAccount": "Verify Account",
-  };
-
-  const currentPage = Object.entries(pageTitles).find(([key]) =>
-    location.pathname.startsWith(key)
-  )?.[1];
+  const currentPage = getDashboardPageMeta(location.pathname).title;
+  const isDashboardHome = normalizeDashboardPath(location.pathname) === "/dashboard";
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -194,6 +201,41 @@ const HeaderPage = ({ isSidebarOpen, setIsSidebarOpen }) => {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    setMenuPulse(getPulseStats(userData));
+  }, [userData]);
+
+  const fetchProfilePulse = useCallback(async () => {
+    if (!isAuthenticated) return;
+    const token = getAuthToken?.();
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/User/Dashboard`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+        },
+      });
+
+      if (!response.ok) return;
+      const result = await response.json();
+      if (!result?.success || !result?.data) return;
+
+      setMenuPulse(getPulseStats(result.data));
+    } catch (error) {
+      console.warn("Profile pulse sync failed:", error);
+    }
+  }, [getAuthToken, isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    fetchProfilePulse();
+    const interval = setInterval(fetchProfilePulse, 20000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated, fetchProfilePulse]);
 
   const handleLogout = async () => {
     try {
@@ -208,13 +250,11 @@ const HeaderPage = ({ isSidebarOpen, setIsSidebarOpen }) => {
   // Show loading state
   if (isLoading) {
     return (
-      <header className={`fixed top-0 left-0 right-0 h-16 z-30 w-full backdrop-blur-md bg-white/70 dark:bg-slate-900/70 border-b border-slate-200 dark:border-slate-800 shadow-sm transition-all duration-200 ${
-        isSidebarOpen ? "md:pl-64" : "md:pl-16"
-      } pl-0 pr-4 flex justify-between items-center`}>
-        <div className="flex items-center">
+      <header className="h-16 w-full backdrop-blur-md bg-white/70 dark:bg-slate-900/70 border-b border-slate-200 dark:border-slate-800 shadow-sm px-4 sm:px-6 lg:px-8 flex justify-between items-center">
+        <div className="flex items-center min-w-0">
           <button
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="md:hidden p-2 rounded-full transition"
+            className="p-2 rounded-full transition"
             aria-label="Toggle sidebar"
           >
             <FontAwesomeIcon
@@ -222,13 +262,13 @@ const HeaderPage = ({ isSidebarOpen, setIsSidebarOpen }) => {
               className="h-5 w-5 text-slate-600 dark:text-slate-300"
             />
           </button>
-          {currentPage && (
-            <h1 className="text-xl md:text-2xl font-semibold ml-4 md:ml-6 text-dark-teal dark:text-teal-400">
+          {currentPage && !isDashboardHome && (
+            <h1 className="ml-3 max-w-[42vw] truncate text-xl font-semibold text-dark-teal dark:text-teal-400 md:ml-6 md:max-w-none md:text-2xl">
               {currentPage}
             </h1>
           )}
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex shrink-0 items-center gap-2 sm:gap-4">
           <div className="animate-pulse bg-slate-300 dark:bg-slate-600 h-8 w-8 rounded-full"></div>
           <div className="animate-pulse bg-slate-300 dark:bg-slate-600 h-8 w-24 rounded"></div>
         </div>
@@ -238,7 +278,6 @@ const HeaderPage = ({ isSidebarOpen, setIsSidebarOpen }) => {
 
   // Don't show header if not authenticated
   if (!isAuthenticated) {
-    console.log("Header not rendered: User not authenticated");
     return null;
   }
 
@@ -252,20 +291,21 @@ const HeaderPage = ({ isSidebarOpen, setIsSidebarOpen }) => {
   };
 
   const userName = getUserName();
-
-  console.log("Rendering header for user:", userName);
+  const currencyCode = userData?.currencyCode || "USD";
+  const revenueLabel = formatCurrencyAmount(menuPulse.grossRevenue, currencyCode, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
 
   return (
     <header
-      className={`fixed top-0 left-0 right-0 h-16 z-30 w-full backdrop-blur-md bg-white/70 dark:bg-slate-900/70 border-b border-slate-200 dark:border-slate-800 shadow-sm transition-all duration-200 ${
-        isSidebarOpen ? "md:pl-64" : "md:pl-16"
-      } pl-0 pr-4 flex justify-between items-center text-slate-900 dark:text-white`}
+      className="h-16 w-full backdrop-blur-md bg-white/70 dark:bg-slate-900/70 border-b border-slate-200 dark:border-slate-800 shadow-sm px-4 sm:px-6 lg:px-8 flex justify-between items-center text-slate-900 dark:text-white"
     >
       {/* Left Side */}
-      <div className="flex items-center">
+      <div className="flex items-center min-w-0">
         <button
           onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-          className="md:hidden p-2 rounded-full transition"
+          className="p-2 rounded-full transition"
           aria-label="Toggle sidebar"
         >
           <FontAwesomeIcon
@@ -273,15 +313,15 @@ const HeaderPage = ({ isSidebarOpen, setIsSidebarOpen }) => {
             className="h-5 w-5 text-slate-600 dark:text-slate-300"
           />
         </button>
-        {currentPage && (
-          <h1 className="text-xl md:text-2xl font-semibold ml-4 md:ml-6 text-dark-teal dark:text-teal-400">
+        {currentPage && !isDashboardHome && (
+          <h1 className="ml-3 max-w-[42vw] truncate text-xl font-semibold text-dark-teal dark:text-teal-400 md:ml-6 md:max-w-none md:text-2xl">
             {currentPage}
           </h1>
         )}
       </div>
 
       {/* Right Side */}
-      <div className="flex items-center gap-4">
+      <div className="flex shrink-0 items-center gap-2 sm:gap-4">
 
         <button
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -328,6 +368,42 @@ const HeaderPage = ({ isSidebarOpen, setIsSidebarOpen }) => {
                 <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                   {userData.email}
                 </p>
+              </div>
+              <div className="px-3 py-3 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/40">
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5">
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      Revenue
+                    </p>
+                    <p className="font-semibold text-emerald-600 dark:text-emerald-400 truncate">
+                      {revenueLabel}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5">
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      Active Trades
+                    </p>
+                    <p className="font-semibold text-cyan-600 dark:text-cyan-300">
+                      {menuPulse.activeTrades}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5">
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      Win Rate
+                    </p>
+                    <p className="font-semibold text-violet-600 dark:text-violet-300">
+                      {menuPulse.winRate.toFixed(1)}%
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5">
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      ROI
+                    </p>
+                    <p className="font-semibold text-amber-600 dark:text-amber-300">
+                      {menuPulse.roiPercent.toFixed(1)}%
+                    </p>
+                  </div>
+                </div>
               </div>
               <div className="px-2 py-1 space-y-1">
                 {userMenuLinks.map((item) => (
