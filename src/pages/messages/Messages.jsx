@@ -109,6 +109,8 @@ export default function MessagesPage() {
       const result = await authFetch([
         `${API_BASE_URL}/Message/Threads?limit=80`,
         `${API_BASE_URL}/Messages/Threads?limit=80`,
+        `${API_BASE_URL}/message/threads?limit=80`,
+        `${API_BASE_URL}/messages/threads?limit=80`,
       ]);
       const rows = Array.isArray(result?.data) ? result.data : [];
       setThreads(rows);
@@ -151,6 +153,8 @@ export default function MessagesPage() {
         const result = await authFetch([
           `${API_BASE_URL}/Message/Thread/${threadId}`,
           `${API_BASE_URL}/Messages/Thread/${threadId}`,
+          `${API_BASE_URL}/message/thread/${threadId}`,
+          `${API_BASE_URL}/messages/thread/${threadId}`,
         ]);
         setSelectedThread(result?.data || null);
       } catch (error) {
@@ -245,6 +249,8 @@ export default function MessagesPage() {
         [
           `${API_BASE_URL}/Message/Send`,
           `${API_BASE_URL}/Messages/Send`,
+          `${API_BASE_URL}/message/send`,
+          `${API_BASE_URL}/messages/send`,
         ],
         {
           method: "POST",

@@ -79,6 +79,8 @@ export default function MessageCenter() {
       const result = await authFetch([
         `${API_BASE_URL}/Admin/Messages?${params.toString()}`,
         `${API_BASE_URL}/Admin/Message?${params.toString()}`,
+        `${API_BASE_URL}/admin/messages?${params.toString()}`,
+        `${API_BASE_URL}/admin/message?${params.toString()}`,
       ]);
       const rows = Array.isArray(result?.data) ? result.data : [];
       setThreads(rows);
@@ -112,6 +114,8 @@ export default function MessageCenter() {
         const result = await authFetch([
           `${API_BASE_URL}/Admin/Messages/${threadId}`,
           `${API_BASE_URL}/Admin/Message/${threadId}`,
+          `${API_BASE_URL}/admin/messages/${threadId}`,
+          `${API_BASE_URL}/admin/message/${threadId}`,
         ]);
         setSelectedThread(result?.data || null);
       } catch (error) {
@@ -161,6 +165,8 @@ export default function MessageCenter() {
         [
           `${API_BASE_URL}/Admin/Messages/${selectedId}/Reply`,
           `${API_BASE_URL}/Admin/Message/${selectedId}/Reply`,
+          `${API_BASE_URL}/admin/messages/${selectedId}/reply`,
+          `${API_BASE_URL}/admin/message/${selectedId}/reply`,
         ],
         {
           method: "POST",
@@ -186,6 +192,8 @@ export default function MessageCenter() {
         [
           `${API_BASE_URL}/Admin/Messages/${selectedId}`,
           `${API_BASE_URL}/Admin/Message/${selectedId}`,
+          `${API_BASE_URL}/admin/messages/${selectedId}`,
+          `${API_BASE_URL}/admin/message/${selectedId}`,
         ],
         {
           method: "PATCH",
